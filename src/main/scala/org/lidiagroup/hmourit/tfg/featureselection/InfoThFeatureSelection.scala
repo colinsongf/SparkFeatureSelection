@@ -105,7 +105,7 @@ class InfoThFeatureSelection private (
 
         // increase pool
         val realPoolSize = math.min(poolSize, rels.length)
-        pool ++= rels.take(realPoolSize).map({ case (k, mi) => (k, criterion.init(mi)) })
+        pool ++= rels.take(realPoolSize).map({ case (k, mi) => (k, criterionFactory.getCriterion.init(mi)) })
         rels = rels.drop(realPoolSize)
         min = pool.last._2.asInstanceOf[InfoThCriterion with Bound]
 
@@ -140,7 +140,7 @@ class InfoThFeatureSelection private (
     val array = data.map({ case LabeledPoint(label, values) => (label +: values.toArray) }).cache
 
     var selected = Seq.empty[F]
-    criterion match {
+    criterionFactory.getCriterion match {
       case _: InfoThCriterion with Bound if poolSize != 0 =>
         selected = selectFeaturesWithPool(array, nToSelect, nFeatures, 0, data.count)
       case _: InfoThCriterion =>
