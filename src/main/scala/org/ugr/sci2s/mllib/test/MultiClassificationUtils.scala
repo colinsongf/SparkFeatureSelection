@@ -15,6 +15,12 @@ import org.lidiagroup.hmourit.tfg.featureselection.InfoThCriterionFactory
 import org.lidiagroup.hmourit.tfg.featureselection.InfoThFeatureSelection
 import scala.collection.immutable.List
 import scala.collection.mutable.LinkedList
+import org.lidiagroup.hmourit.tfg.discretization.EntropyMinimizationDiscretizerModel
+import org.lidiagroup.hmourit.tfg.featureselection.InfoThFeatureSelectionModel
+import org.lidiagroup.hmourit.tfg.discretization.DiscretizerModel
+import org.lidiagroup.hmourit.tfg.featureselection.FeatureSelectionModel
+import org.apache.spark.mllib.regression.LabeledPoint
+import org.apache.spark.mllib.regression.LabeledPoint
 
 object MultiClassificationUtils {
   
@@ -96,15 +102,14 @@ object MultiClassificationUtils {
 		}
 		
 		def executeExperiment(classify: (RDD[LabeledPoint]) => ClassificationModel, 
-		    discretize: Option[(RDD[LabeledPoint]) => RDD[LabeledPoint]], 
-		    featureSelect: Option[(RDD[LabeledPoint]) => RDD[LabeledPoint]], 
+		    discretize: Option[(RDD[LabeledPoint]) => (DiscretizerModel[LabeledPoint], RDD[LabeledPoint])], 
+		    featureSelect: Option[(RDD[LabeledPoint]) => (FeatureSelectionModel[LabeledPoint], RDD[LabeledPoint])], 
 		    sc: SparkContext, 
 		    headerFile: String, 
 		    inputData: Object, 
 		    outputDir: String, 
 		    algoInfo: String) {
   		
-			val initAlltTime = System.nanoTime()
 			val samplingRate = 0.01
 			val seed = new Random
 			
@@ -122,7 +127,7 @@ object MultiClassificationUtils {
 			val typeConversion = KeelParser.parseHeaderFile(sc, headerFile)	
 			//val typeconv = typeConversion.asInstanceOf[Array[scala.collection.immutable.Map[String,scala.Double]]]
 			val binary = typeConversion.last.size < 3
-			if(!binary) throw new IllegalArgumentException("Data class not binary...")
+			//if(!binary) throw new IllegalArgumentException("Data class not binary...")
 			val bcTypeConv = sc.broadcast(typeConversion).value
 			val dataFiles = inputData match {
 			  case s: String => getDataFiles(s)
@@ -130,33 +135,41 @@ object MultiClassificationUtils {
 			}			
 			
 			val info = Map[String, String]("algoInfo" -> algoInfo, "dataInfo" -> dataInfo)
-			val times = scala.collection.mutable.Map[String, Seq[Double]] ("testAcc" -> Seq(),
-			    "discTime" -> Seq(),
-			    "FSTime" -> Seq())
+			val times = scala.collection.mutable.Map[String, Seq[Double]] ("FullTime" -> Seq(),
+			    "DiscTime" -> Seq(),
+			    "FSTime" -> Seq(),
+			    "ClsTime" -> Seq())
 			
 			val accResults = dataFiles.map { case (trainFile, testFile) => {
+			  
+				var initAllTime = System.nanoTime()
 				val trainData = sc.textFile(trainFile).
-						sample(false, samplingRate, seed.nextLong).
+						//sample(false, samplingRate, seed.nextLong).
 						map(line => (KeelParser.parseLabeledPoint(bcTypeConv, line)))
 				val testData = sc.textFile(testFile).
-						sample(false, samplingRate, seed.nextLong).
+						//sample(false, samplingRate, seed.nextLong).
 						map(line => (KeelParser.parseLabeledPoint(bcTypeConv, line)))
 				trainData.persist(); testData.persist()
 				
 				// Discretization
 				var initStartTime = System.nanoTime()
 				var trData = trainData
+				var tstData = testData
 				
 				val haveToDisc = discretize match { 
 				  case Some(i) => true
 				  case None => false
 				}
 				
+				var discTime = 0.0
 				if(haveToDisc) {
-					var trData = discretize.get(trainData)
-					val discTime = (System.nanoTime() - initStartTime) / 1e9
-					times("discTime") = times("discTime") :+ discTime
-				}
+					initStartTime = System.nanoTime()
+					val (discAlgorithm, discData) = discretize.get(trainData)
+					trData = discData
+					discTime = (System.nanoTime() - initStartTime) / 1e9
+					tstData = discAlgorithm.discretize(tstData)
+				}				
+				times("DiscTime") = times("DiscTime") :+ discTime
 
 				// Feature Selection
 				val haveToFS = featureSelect match { 
@@ -164,56 +177,56 @@ object MultiClassificationUtils {
 				  case None => false
 				}
 				
+				var FSTime = 0.0
 				if(haveToFS) {
 					initStartTime = System.nanoTime()
-					trData = featureSelect.get(trData)
-					val FSTime = (System.nanoTime() - initStartTime) / 1e9
-					times("FSTime") = times("FSTime") :+ FSTime
+					val (featureSelector, reductedData) = featureSelect.get(trData)
+					trData = reductedData
+					FSTime = (System.nanoTime() - initStartTime) / 1e9
+					tstData = featureSelector.select(tstData)
 				}
+				times("FSTime") = times("FSTime") :+ FSTime
 				
 				// Run training algorithm to build the model
 				initStartTime = System.nanoTime()
-				val model = classify(trData)
+				val classificationModel = classify(trData)
+				val classifficationTime = (System.nanoTime() - initStartTime) / 1e9		
+				times("ClsTime") = times("ClsTime") :+ classifficationTime
 				
-				print("Computing predictions!")
-				print(trainData.first.toString)
-				val traValuesAndPreds = computePredictions(model, trainData)
-				val tstValuesAndPreds = computePredictions(model, testData)
-				val classifficationTime = (System.nanoTime() - initStartTime) / 1e9
-				print("Test classification acc: " + tstValuesAndPreds)				
+				val traValuesAndPreds = computePredictions(classificationModel, trData)
+				val tstValuesAndPreds = computePredictions(classificationModel, tstData)
 				
 				trainData.unpersist(); testData.unpersist()
+				
+				var fullTime = (System.nanoTime() - initAllTime) / 1e9
+				times("FullTime") = times("FullTime") :+ fullTime
+				
 				(traValuesAndPreds, tstValuesAndPreds)}
 			}
 			
-			val fullTime = (System.nanoTime() - initAlltTime) / 1e9
-				// Do the output (fold results files and global result file)
+			// Do the output (fold results files and global result file)
 			//val dir = new File("results/" + outputDir); dir.mkdirs()
-			doOutput(outputDir, accResults, info, times.toMap, fullTime, typeConversion)
+			doOutput(outputDir, accResults, info, times.toMap, typeConversion)
 		}
 
 		
 		def doOutput (outputDir: String, 
 				accResults: Array[(RDD[(Double, Double)], RDD[(Double, Double)])], 
 				info: Map[String, String],
-				timeResults: Map[String, Seq[Double]], 
-				time: Double, 
+				timeResults: Map[String, Seq[Double]],
 				typeConv: Array[Map[String,Double]]) {
-		   
-		    // create multiple directories at one time
-		    //Boolean successful = dir.mkdirs();
 		  
   			val revConv = typeConv.last.map(_.swap) // for last class
   			val default = "error"
 		  
-			var output = info.get("algoInfo") + "Accuracy Results\tTrain\tTest\n"
-			//val outputName = outputFile.split(".").last
+			var output = info.get("algoInfo").get + "Accuracy Results\tTrain\tTest\n"
 			val traFoldAcc= accResults.map(_._1).map(computeAccuracy)
 			val tstFoldAcc = accResults.map(_._2).map(computeAccuracy)
 			
 			// Aggregated statistics
 			val (aggAvgAccTr, aggStdAccTr) = calcAggStatistics(traFoldAcc)
 			val (aggAvgAccTst, aggStdAccTst) = calcAggStatistics(tstFoldAcc)
+			
 			
 			//val aggConfMatrix = ConfusionMatrix.apply(accResults.map(_._2).reduceLeft(_ union _))
 			val aggConfMatrix = ConfusionMatrix.apply(accResults.map(_._2).reduceLeft(_ union _), 
@@ -240,7 +253,14 @@ object MultiClassificationUtils {
   			
 			output += s"Avg Acc:\t$aggAvgAccTr\t$aggAvgAccTst\n"
 			output += s"Svd acc:\t$aggStdAccTr\t$aggStdAccTst\n"
-		    output += s"Time:\t$time seconds.\n"
+			output += "Mean Discretization Time:\t" + 
+					timeResults("DiscTime").sum / timeResults("DiscTime").size + " seconds.\n"
+			output += "Mean Feature Selection Time:\t" + 
+					timeResults("FSTime").sum / timeResults("FSTime").size + " seconds.\n"
+			output += "Mean Classification Time:\t" + 
+					timeResults("ClsTime").sum / timeResults("ClsTime").size + " seconds.\n"
+			output += "Mean Execution Time:\t" + 
+					timeResults("FullTime").sum / timeResults("FullTime").size + " seconds.\n"
 		    output += aggConfMatrix.fValue.foldLeft("\t")((str, t) => str + "\t" + t._1) + "\n"
 		    output += aggConfMatrix.fValue.foldLeft("F-Measure:")((str, t) => str + "\t" + t._2) + "\n"
 		    output += aggConfMatrix.precision.foldLeft("Precision:")((str, t) => str + "\t" + t._2) + "\n"

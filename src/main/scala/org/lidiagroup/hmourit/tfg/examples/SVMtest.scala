@@ -63,20 +63,24 @@ object SVMtest {
 		  model
 		}
 		
+		val ECBDLRangeContFeatures = (0 to 2) ++ (21 to 38) ++ (93 to 130) ++ (151 to 630)
+		val irisRangeContFeatures = 0 to 3
 		def discretization = (train: RDD[LabeledPoint]) => {
 			val discretizer = EntropyMinimizationDiscretizer.train(train,
-		      0 until train.first.features.size, // continuous features 
-		      10) // max number of values per feature
-		    discretizer.discretize(train)
+					ECBDLRangeContFeatures, // continuous features 
+					10) // max number of values per feature
+		    val discData = discretizer.discretize(train)
+		    (discretizer, discData)
 		}
 		
 		def featureSelect = (data: RDD[LabeledPoint]) => {
 			// Feature Selection
 			val criterion = new InfoThCriterionFactory("jmi")
 			val model = InfoThFeatureSelection.train(criterion, 
-		      data, //data 
+		      data,
 		      100) // number of features to select
-		    model.select(data)
+		    val reducedData = model.select(data)
+		    (model, reducedData)
 		}
 		
 		// Output of the algorithm
