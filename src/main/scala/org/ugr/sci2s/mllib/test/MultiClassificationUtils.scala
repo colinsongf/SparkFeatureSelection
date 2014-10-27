@@ -21,8 +21,17 @@ import org.lidiagroup.hmourit.tfg.discretization.DiscretizerModel
 import org.lidiagroup.hmourit.tfg.featureselection.FeatureSelectionModel
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.mllib.regression.LabeledPoint
+import org.apache.spark.mllib.linalg.Vectors
+import org.apache.hadoop.mapreduce.lib.input.InvalidInputException
 
 object MultiClassificationUtils {
+  
+  		def parseThresholds (str: String): (Int, Seq[Double])= {
+			val tokens = str split "\t"
+			val points = tokens.slice(1, tokens.length).map(_.toDouble)
+			val attIndex = tokens(0).toInt
+			(attIndex, points.toSeq)
+  		}
   
   		def computePredictions(model: ClassificationModel, data: RDD[LabeledPoint], threshold: Double = .5) =
 			data.map(point => (point.label, if(model.predict(point.features) >= threshold) 1. else 0.))
@@ -162,12 +171,32 @@ object MultiClassificationUtils {
 				}
 				
 				var discTime = 0.0
+				var thresholds = Map.empty[Int, Seq[Double]]
 				if(haveToDisc) {
+					var generateThs = false
+					try {
+						thresholds = sc.textFile(outputDir + "discThresholds").filter(!_.isEmpty())
+											.map(parseThresholds).collect.toMap
+					} catch {
+						case iie: org.apache.hadoop.mapred.InvalidInputException => generateThs = true
+					}
 					initStartTime = System.nanoTime()
-					val (discAlgorithm, discData) = discretize.get(trainData)
-					trData = discData
-					discTime = (System.nanoTime() - initStartTime) / 1e9
-					tstData = discAlgorithm.discretize(tstData)
+					if(generateThs) {
+						val (discAlgorithm, discData) = discretize.get(trainData)
+						discTime = (System.nanoTime() - initStartTime) / 1e9
+						thresholds = discAlgorithm.getThresholds
+						trData = discData
+						tstData = discAlgorithm.discretize(tstData)
+						// Save the obtained thresholds in a hdfs file (as a sequence)
+						val output = thresholds.foldLeft("")((str, elem) => str + 
+									elem._1 + "\t" + elem._2.mkString("\t") + "\n")
+						val parThresholds = sc.parallelize(Array(output), 1)
+						parThresholds.saveAsTextFile(outputDir + "discThresholds")
+					} else {
+						val discAlgorithm = new EntropyMinimizationDiscretizerModel(thresholds)
+						trData = discAlgorithm.discretize(trainData)
+						tstData = discAlgorithm.discretize(tstData)
+					}
 				}				
 				times("DiscTime") = times("DiscTime") :+ discTime
 

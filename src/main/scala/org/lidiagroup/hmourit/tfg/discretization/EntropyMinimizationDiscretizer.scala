@@ -32,11 +32,10 @@ class EntropyMinimizationDiscretizer private (
   def run(data: RDD[LabeledPoint]) = {
     val labels2Int = data.context.broadcast(data.map(_.label).distinct.collect.zipWithIndex.toMap)
     val nLabels = labels2Int.value.size
-
     var thresholds = Map.empty[Int, Seq[Double]]
     for (i <- continuousFeaturesIndexes) {
       val featureValues = data.map({
-        case LabeledPoint(label, values) => (values.toArray(i), labels2Int.value(label))
+  		case LabeledPoint(label, values) => (values.toArray(i), labels2Int.value(label))
       })
       val sortedValues = featureValues.sortByKey()
       val initialCandidates = initialThresholds(sortedValues, nLabels)
@@ -49,7 +48,7 @@ class EntropyMinimizationDiscretizer private (
   }
 
   /**
-   * Calculates the initial candidate treholds for a feature
+   * Calculates the initial candidate tresholds for a feature
    * @param data RDD of (value, label) pairs.
    * @param nLabels Number of distinct labels in the dataset.
    * @return RDD of (candidate, class frequencies between last and current candidate) pairs.
@@ -79,7 +78,7 @@ class EntropyMinimizationDiscretizer private (
       result = (lastX, freqs) +: result
 
       result.reverse.toIterator
-    }).persist(StorageLevel.MEMORY_AND_DISK)
+    }).persist()
   }
   
   /**

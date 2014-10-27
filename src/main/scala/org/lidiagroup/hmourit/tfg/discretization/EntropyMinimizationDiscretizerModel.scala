@@ -62,5 +62,9 @@ class EntropyMinimizationDiscretizerModel (val thresholds: Map[Int, Seq[Double]]
     while (value > aux.head._1) aux = aux.tail
     aux.head._2
   }
+  
+  override def getThresholds() = thresholds
+  
+  
 
 }

@@ -23,5 +23,7 @@ trait DiscretizerModel[T] extends Serializable {
    * @return Data point with values discretized
    */
   def discretize(data: T): T
+  
+  def getThresholds: Map[Int, Seq[Double]]
 
 }

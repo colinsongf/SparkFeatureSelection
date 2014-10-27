@@ -23,4 +23,6 @@ trait FeatureSelectionModel[T] extends Serializable{
    * @return Data point with its dimensionality reduced.
    */
   def select(data: T): T
+  
+  def getSelection: Seq[Int]
 }

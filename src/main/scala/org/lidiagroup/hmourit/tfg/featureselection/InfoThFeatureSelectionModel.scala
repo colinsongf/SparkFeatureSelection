@@ -33,4 +33,6 @@ class InfoThFeatureSelectionModel (val features: Array[Int])
       LabeledPoint(label, Vectors.dense(features.map(array(_))))
     })
   }
+  
+  override def getSelection: Seq[Int] = features.toSeq
 }
