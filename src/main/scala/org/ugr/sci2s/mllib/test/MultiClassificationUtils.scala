@@ -222,10 +222,10 @@ object MultiClassificationUtils {
 			  
 				var initAllTime = System.nanoTime()
 				val trainData = sc.textFile(trainFile).
-						sample(false, samplingRate, seed.nextLong).
+						//sample(false, samplingRate, seed.nextLong).
 						map(line => (KeelParser.parseLabeledPoint(bcTypeConv, line)))
 				val testData = sc.textFile(testFile).
-						sample(false, samplingRate, seed.nextLong).
+						//sample(false, samplingRate, seed.nextLong).
 						map(line => (KeelParser.parseLabeledPoint(bcTypeConv, line)))
 				trainData.persist(); testData.persist()
 				
