@@ -34,5 +34,5 @@ class InfoThFeatureSelectionModel (val features: Array[Int])
     })
   }
   
-  override def getSelection: Seq[Int] = features.toSeq
+  override def getSelection: Array[Int] = features
 }

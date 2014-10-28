@@ -23,6 +23,7 @@ import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.mllib.linalg.Vectors
 import org.apache.hadoop.mapreduce.lib.input.InvalidInputException
+import org.apache.spark.mllib.regression.LabeledPoint
 
 object MultiClassificationUtils {
   
@@ -31,6 +32,12 @@ object MultiClassificationUtils {
 			val points = tokens.slice(1, tokens.length).map(_.toDouble)
 			val attIndex = tokens(0).toInt
 			(attIndex, points.toSeq)
+  		}
+  		
+  		def parseSelectedAtts (str: String) = {
+			val tokens = str split "\t"
+			val attIndex = tokens(0).toInt
+			(attIndex)
   		}
   
   		def computePredictions(model: ClassificationModel, data: RDD[LabeledPoint], threshold: Double = .5) =
@@ -110,6 +117,68 @@ object MultiClassificationUtils {
 			
 		}
 		
+		def discretization(discretize: Option[(RDD[LabeledPoint]) => (DiscretizerModel[LabeledPoint], RDD[LabeledPoint])], 
+				train: RDD[LabeledPoint], 
+				test: RDD[LabeledPoint], 
+				outputDir: String): (RDD[LabeledPoint], RDD[LabeledPoint], Double) = {
+			var thresholds = Map.empty[Int, Seq[Double]]
+			var generateThs = false
+			try {
+				thresholds = train.context.textFile(outputDir + "discThresholds").filter(!_.isEmpty())
+									.map(parseThresholds).collect.toMap
+			} catch {
+				case iie: org.apache.hadoop.mapred.InvalidInputException => generateThs = true
+			}
+			
+			if(generateThs) {
+				val initStartTime = System.nanoTime()
+				val (discAlgorithm, discData) = discretize.get(train)
+				val discTime = (System.nanoTime() - initStartTime) / 1e9
+				thresholds = discAlgorithm.getThresholds
+				// Save the obtained thresholds in a hdfs file (as a sequence)
+				val output = thresholds.foldLeft("")((str, elem) => str + 
+							elem._1 + "\t" + elem._2.mkString("\t") + "\n")
+				println(output)
+				val parThresholds = train.context.parallelize(Array(output), 1)
+				parThresholds.saveAsTextFile(outputDir + "discThresholds")
+				(discData, discAlgorithm.discretize(test), discTime)
+			} else {
+				val discAlgorithm = new EntropyMinimizationDiscretizerModel(thresholds)
+				(discAlgorithm.discretize(train), discAlgorithm.discretize(test), 0.0)
+			}			
+		}
+		
+		def featureSelection(fs: Option[(RDD[LabeledPoint]) => (FeatureSelectionModel[LabeledPoint], RDD[LabeledPoint])], 
+				train: RDD[LabeledPoint], 
+				test: RDD[LabeledPoint], 
+				outputDir: String): (RDD[LabeledPoint], RDD[LabeledPoint], Double) = {
+		  				
+			var selectedAtts = Array.empty[Int]
+			var doFS = false
+			try {
+				selectedAtts = train.context.textFile(outputDir + "FSscheme").filter(!_.isEmpty())
+									.map(parseSelectedAtts).collect
+			} catch {
+				case iie: org.apache.hadoop.mapred.InvalidInputException => doFS = true
+			}
+			
+			if(doFS) {
+				val initStartTime = System.nanoTime()
+				val (featureSelector, reductedData) = fs.get(train)
+				val FSTime = (System.nanoTime() - initStartTime) / 1e9
+				selectedAtts = featureSelector.getSelection
+				// Save the obtained FS scheme in a hdfs file (as a sequence)
+				val output = selectedAtts.mkString("\n")
+				println(output)
+				val parFSscheme = train.context.parallelize(Array(output), 1)
+				parFSscheme.saveAsTextFile(outputDir + "FSscheme")
+				(reductedData, featureSelector.select(test), FSTime)
+			} else {
+				val featureSelector = new InfoThFeatureSelectionModel(selectedAtts)
+				(featureSelector.select(train), featureSelector.select(test), 0.0)
+			}	  
+		}
+		
 		def executeExperiment(classify: (RDD[LabeledPoint]) => ClassificationModel, 
 		    discretize: Option[(RDD[LabeledPoint]) => (DiscretizerModel[LabeledPoint], RDD[LabeledPoint])], 
 		    featureSelect: Option[(RDD[LabeledPoint]) => (FeatureSelectionModel[LabeledPoint], RDD[LabeledPoint])], 
@@ -153,15 +222,14 @@ object MultiClassificationUtils {
 			  
 				var initAllTime = System.nanoTime()
 				val trainData = sc.textFile(trainFile).
-						//sample(false, samplingRate, seed.nextLong).
+						sample(false, samplingRate, seed.nextLong).
 						map(line => (KeelParser.parseLabeledPoint(bcTypeConv, line)))
 				val testData = sc.textFile(testFile).
-						//sample(false, samplingRate, seed.nextLong).
+						sample(false, samplingRate, seed.nextLong).
 						map(line => (KeelParser.parseLabeledPoint(bcTypeConv, line)))
 				trainData.persist(); testData.persist()
 				
 				// Discretization
-				var initStartTime = System.nanoTime()
 				var trData = trainData
 				var tstData = testData
 				
@@ -170,35 +238,15 @@ object MultiClassificationUtils {
 				  case None => false
 				}
 				
-				var discTime = 0.0
-				var thresholds = Map.empty[Int, Seq[Double]]
-				if(haveToDisc) {
-					var generateThs = false
-					try {
-						thresholds = sc.textFile(outputDir + "discThresholds").filter(!_.isEmpty())
-											.map(parseThresholds).collect.toMap
-					} catch {
-						case iie: org.apache.hadoop.mapred.InvalidInputException => generateThs = true
-					}
-					initStartTime = System.nanoTime()
-					if(generateThs) {
-						val (discAlgorithm, discData) = discretize.get(trainData)
-						discTime = (System.nanoTime() - initStartTime) / 1e9
-						thresholds = discAlgorithm.getThresholds
-						trData = discData
-						tstData = discAlgorithm.discretize(tstData)
-						// Save the obtained thresholds in a hdfs file (as a sequence)
-						val output = thresholds.foldLeft("")((str, elem) => str + 
-									elem._1 + "\t" + elem._2.mkString("\t") + "\n")
-						val parThresholds = sc.parallelize(Array(output), 1)
-						parThresholds.saveAsTextFile(outputDir + "discThresholds")
-					} else {
-						val discAlgorithm = new EntropyMinimizationDiscretizerModel(thresholds)
-						trData = discAlgorithm.discretize(trainData)
-						tstData = discAlgorithm.discretize(tstData)
-					}
-				}				
-				times("DiscTime") = times("DiscTime") :+ discTime
+				var taskTime = 0.0
+				if(haveToDisc)  {
+					val (discTrData, discTstData, discTime) = discretization(
+								discretize, trData, tstData, outputDir)
+					trData = discTrData
+					tstData = discTstData
+					taskTime = discTime
+				}
+				times("DiscTime") = times("DiscTime") :+ taskTime
 
 				// Feature Selection
 				val haveToFS = featureSelect match { 
@@ -206,18 +254,18 @@ object MultiClassificationUtils {
 				  case None => false
 				}
 				
-				var FSTime = 0.0
-				if(haveToFS) {
-					initStartTime = System.nanoTime()
-					val (featureSelector, reductedData) = featureSelect.get(trData)
-					trData = reductedData
-					FSTime = (System.nanoTime() - initStartTime) / 1e9
-					tstData = featureSelector.select(tstData)
+				taskTime = 0.0
+				if(haveToFS)  {
+					val (fsTrainData, fsTestData, fsTime) = featureSelection(
+					    featureSelect, trData, tstData, outputDir)
+					trData = fsTrainData
+					tstData = fsTestData
+					taskTime = fsTime
 				}
-				times("FSTime") = times("FSTime") :+ FSTime
+				times("FSTime") = times("FSTime") :+ taskTime
 				
 				// Run training algorithm to build the model
-				initStartTime = System.nanoTime()
+				val initStartTime = System.nanoTime()
 				val classificationModel = classify(trData)
 				val classifficationTime = (System.nanoTime() - initStartTime) / 1e9		
 				times("ClsTime") = times("ClsTime") :+ classifficationTime

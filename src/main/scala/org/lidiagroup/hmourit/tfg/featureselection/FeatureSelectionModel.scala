@@ -24,5 +24,5 @@ trait FeatureSelectionModel[T] extends Serializable{
    */
   def select(data: T): T
   
-  def getSelection: Seq[Int]
+  def getSelection: Array[Int]
 }
