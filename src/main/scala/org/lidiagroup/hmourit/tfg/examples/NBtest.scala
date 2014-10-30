@@ -1,5 +1,7 @@
 package org.lidiagroup.hmourit.tfg.examples
 import org.apache.spark.mllib.classification._
+import com.esotericsoftware.kryo.Kryo
+import org.apache.spark.serializer.KryoRegistrator
 import org.apache.spark.mllib.tree.configuration.Algo._
 import org.apache.spark.rdd.RDD
 import org.apache.spark.mllib.regression.LabeledPoint
@@ -8,6 +10,15 @@ import org.apache.spark.SparkContext
 import org.ugr.sci2s.mllib.test.{MultiClassificationUtils => MCU}
 import org.lidiagroup.hmourit.tfg.discretization._
 import org.lidiagroup.hmourit.tfg.featureselection._
+
+class MyRegistrator extends KryoRegistrator {
+  override def registerClasses(kryo: Kryo) {
+    kryo.register(classOf[Double])
+    kryo.register(classOf[Array[Double]])
+    kryo.register(classOf[LabeledPoint])
+    
+  }
+}
 
 object NBtest {
 
@@ -28,6 +39,8 @@ object NBtest {
 		val lambda = if (nonDefaut) args(4).toDouble else 1.0
 
 		val conf = new SparkConf().setAppName("MLlib Benchmarking")
+		conf.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
+		conf.set("spark.kryo.registrator", "org.lidiagroup.hmourit.tfg.examples.MyRegistrator")
 		val sc = new SparkContext(conf)
 		
 		def classify = (train: RDD[LabeledPoint]) => {

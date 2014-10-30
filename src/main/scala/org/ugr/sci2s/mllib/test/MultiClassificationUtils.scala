@@ -232,35 +232,27 @@ object MultiClassificationUtils {
 				// Discretization
 				var trData = trainData
 				var tstData = testData
-				
-				val haveToDisc = discretize match { 
-				  case Some(i) => true
-				  case None => false
-				}
-				
 				var taskTime = 0.0
-				if(haveToDisc)  {
-					val (discTrData, discTstData, discTime) = discretization(
+				discretize match { 
+				  case Some(i) => 
+				    val (discTrData, discTstData, discTime) = discretization(
 								discretize, trData, tstData, outputDir)
 					trData = discTrData
 					tstData = discTstData
 					taskTime = discTime
-				}
+				  case None => /* criteria not fulfilled, do not discretize */
+				}				
 				times("DiscTime") = times("DiscTime") :+ taskTime
 
 				// Feature Selection
 				val haveToFS = featureSelect match { 
-				  case Some(i) => true
-				  case None => false
-				}
-				
-				taskTime = 0.0
-				if(haveToFS)  {
-					val (fsTrainData, fsTestData, fsTime) = featureSelection(
+				  case Some(i) => 
+				    val (fsTrainData, fsTestData, fsTime) = featureSelection(
 					    featureSelect, trData, tstData, outputDir)
 					trData = fsTrainData
 					tstData = fsTestData
 					taskTime = fsTime
+				  case None => taskTime = 0.0 /* criteria not fulfilled, do not do FS */
 				}
 				times("FSTime") = times("FSTime") :+ taskTime
 				
