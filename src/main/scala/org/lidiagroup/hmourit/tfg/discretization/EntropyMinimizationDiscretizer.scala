@@ -160,16 +160,16 @@ class EntropyMinimizationDiscretizer private (
         }
 
         // accumulate freqs from right to left
-        val rightTotal = Array.fill(nLabels)(0L)
+        var rightTotal = Array.fill(nLabels)(0L)
         for (i <- slice + 1 until numPartitions) {
-          for (j <- 0 until nLabels) leftTotal(j) += bcTotals.value(i)(j)
+          rightTotal = (rightTotal, bcTotals.value(i)).zipped.map(_ + _)
         }
 
         var leftAndRightAccum = Seq.empty[(Double, Array[Long], Array[Long], Array[Long])]
 
         for ((cand, freqs, leftFreqs) <- leftAccum) {
-          leftAndRightAccum = (cand, freqs, leftFreqs, rightTotal.clone) +: leftAndRightAccum
           for (i <- 0 until nLabels) rightTotal(i) += freqs(i)
+          leftAndRightAccum = (cand, freqs, leftFreqs, rightTotal.clone) +: leftAndRightAccum
         }
 
         leftAndRightAccum.iterator
@@ -221,9 +221,7 @@ class EntropyMinimizationDiscretizer private (
 
     // choose best candidates and partition data to make recursive calls
     if (finalCandidates.count > 0) {
-      val selectedThreshold = finalCandidates.reduce({ case ((whs1, cand1), (whs2, cand2)) =>
-        if (whs1 < whs2) (whs1, cand1) else (whs2, cand2)
-      })._2
+      val selectedThreshold = finalCandidates.min._2
       Some(selectedThreshold)
     } else {
       None
