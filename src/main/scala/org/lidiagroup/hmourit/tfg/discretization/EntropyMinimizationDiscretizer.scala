@@ -5,6 +5,7 @@ import org.apache.spark.SparkContext._
 import org.apache.spark.rdd.RDD
 import org.apache.spark.storage.StorageLevel
 import org.apache.spark.mllib.regression.LabeledPoint
+import org.lidiagroup.hmourit.tfg.featureselection.InfoThCriterion
 
 /**
  * This class contains methods to calculate thresholds to discretize continuous values with the
@@ -39,8 +40,13 @@ class EntropyMinimizationDiscretizer private (
       })
       val sortedValues = featureValues.sortByKey()
       val initialCandidates = initialThresholds(sortedValues, nLabels)
-      val thresholdsForFeature = this.getThresholds(initialCandidates, nLabels)
-      thresholds += ((i, thresholdsForFeature))
+      val thesholdsByFeature = if(initialCandidates.count < 1e6) {
+    	  getThresholds(initialCandidates.collect(), nLabels) 
+      } else {
+    	  getThresholds(initialCandidates.persist(), nLabels)
+      }
+        
+      thresholds += ((i, thesholdsByFeature))
     }
 
     new EntropyMinimizationDiscretizerModel(thresholds)
@@ -78,7 +84,7 @@ class EntropyMinimizationDiscretizer private (
       result = (lastX, freqs) +: result
 
       result.reverse.toIterator
-    }).persist()
+    })
   }
   
   /**
@@ -106,6 +112,39 @@ class EntropyMinimizationDiscretizer private (
         cands = cands.coalesce(partitions(nCands))
 
         evalThresholds(cands, lastThresh, nLabels) match {
+          case Some(th) =>
+            result = th +: result
+            stack.enqueue(((bounds._1, th), Some(th)))
+            stack.enqueue(((th, bounds._2), Some(th)))
+          case None => /* criteria not fulfilled, finish */
+        }
+      }
+    }
+    (Double.PositiveInfinity +: result).sorted
+  }
+  
+    /**
+   * Returns a sequence of doubles that define the intervals to make the discretization.
+   *
+   * @param candidates RDD of (value, label) pairs
+   */
+  private def getThresholds(candidates: Array[(Double, Array[Long])], nLabels: Int): Seq[Double] = {
+
+    // Create queue
+    val stack = new mutable.Queue[((Double, Double), Option[Double])]
+
+    // Insert first in the stack
+    stack.enqueue(((Double.NegativeInfinity, Double.PositiveInfinity), None))
+    var result = Seq(Double.NegativeInfinity)
+
+    // While more elements to eval, continue
+    while(stack.length > 0 && result.size < this.maxBins){
+
+      val (bounds, lastThresh) = stack.dequeue
+      val newCandidates = candidates.filter({ case (th, _) => th > bounds._1 && th <= bounds._2 })
+      
+      if (newCandidates.size > 0) {
+        evalThresholds(newCandidates, lastThresh, nLabels) match {
           case Some(th) =>
             result = th +: result
             stack.enqueue(((bounds._1, th), Some(th)))
@@ -227,6 +266,74 @@ class EntropyMinimizationDiscretizer private (
       None
     }
 
+  }
+  
+  /**
+   * Selects one final thresholds among the candidates and returns two partitions to recurse
+   *
+   * @param candidates RDD of (candidate, class frequencies between last and current candidate)
+   * @param lastSelected last selected threshold to avoid selecting it again
+   */
+  private def evalThresholds(
+      candidates: Array[(Double, Array[Long])],
+      lastSelected : Option[Double],
+      nLabels: Int): Option[Double] = {
+    
+    // Calculate total frequencies by label
+    val totals = candidates
+    		.map(_._2)
+    		.reduce((freq1, freq2) => (freq1, freq2).zipped.map(_ + _))
+    
+    // Calculate partial frequencies (left and right to the candidate) by label
+    var leftAccum = Array.fill(nLabels)(0L)
+    var entropyFreqs = Seq.empty[(Double, Array[Long], Array[Long], Array[Long])]
+    for(i <- 0 until candidates.size) {
+    	val (cand, freq) = candidates(i)
+    	leftAccum = (leftAccum, freq).zipped.map(_ + _)
+    	val rightTotal = (totals, leftAccum).zipped.map(_ - _)
+    	entropyFreqs = (cand, freq, leftAccum.clone, rightTotal) +: entropyFreqs
+    }
+
+    // calculate h(S)
+    // s: number of elements
+    // k: number of distinct classes
+    // hs: entropy
+    val s  = totals.sum
+    val hs = InfoTheory.entropy(totals.toSeq, s)
+    val k  = totals.filter(_ != 0).size
+
+    // select best threshold according to the criteria
+    val finalCandidates =
+      entropyFreqs.flatMap({
+        case (cand, _, leftFreqs, rightFreqs) =>
+
+          val k1  = leftFreqs.filter(_ != 0).size
+          val s1  = if (k1 > 0) leftFreqs.sum else 0
+          val hs1 = InfoTheory.entropy(leftFreqs, s1)
+
+          val k2  = rightFreqs.filter(_ != 0).size
+          val s2  = if (k2 > 0) rightFreqs.sum else 0
+          val hs2 = InfoTheory.entropy(rightFreqs, s2)
+
+          val weightedHs = (s1 * hs1 + s2 * hs2) / s
+          val gain       = hs - weightedHs
+          val delta      = log2(math.pow(3, k) - 2) - (k * hs - k1 * hs1 - k2 * hs2)
+          var criterion  = (gain - (log2(s - 1) + delta) / s) > -1e-5
+
+          lastSelected match {
+              case None =>
+              case Some(last) => criterion = criterion && (cand != last)
+          }
+
+          if (criterion) {
+            Seq((weightedHs, cand))
+          } else {
+            Seq.empty[(Double, Double)]
+          }
+      })
+    
+    // choose best candidates and partition data to make recursive calls
+    if (finalCandidates.size > 0) Some(finalCandidates.min._2) else None
   }
 
 }
