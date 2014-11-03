@@ -4,6 +4,7 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.SparkContext._
 import org.lidiagroup.hmourit.tfg.featureselection.{InfoTheory => IT}
+import org.apache.spark.storage.StorageLevel
 
 class InfoThFeatureSelection private (
     val criterionFactory: InfoThCriterionFactory,
@@ -26,6 +27,7 @@ class InfoThFeatureSelection private (
       nElements: Long)
     : Seq[F] = {
 
+    val nElements = data.count
     // calculate relevance
     var pool = IT.miAndCmi(data, 1 to nFeatures, label, None, nElements)
       .map({ case (k, (mi, _)) => (k, criterionFactory.getCriterion.init(mi)) })
@@ -137,14 +139,19 @@ class InfoThFeatureSelection private (
       throw new IllegalArgumentException("data doesn't have so many features")
     }
 
-    val array = data.map({ case LabeledPoint(label, values) => (label +: values.toArray) }).cache
-
+    val array = data.map({ case LabeledPoint(label, values) => (label +: values.toArray) })
+    val nElements = array.count()
+    
+    /*var array = data.map({ case LabeledPoint(label, values) => (label +: values.toArray) }).persist(StorageLevel.MEMORY_ONLY_SER)
+    val nElements = array.count()
+    array = array.coalesce(214, true)
+    */
     var selected = Seq.empty[F]
     criterionFactory.getCriterion match {
       case _: InfoThCriterion with Bound if poolSize != 0 =>
-        selected = selectFeaturesWithPool(array, nToSelect, nFeatures, 0, data.count)
+        selected = selectFeaturesWithPool(array, nToSelect, nFeatures, 0, nElements)
       case _: InfoThCriterion =>
-        selected = selectFeaturesWithoutPool(array, nToSelect, nFeatures, 0, data.count)
+        selected = selectFeaturesWithoutPool(array, nToSelect, nFeatures, 0, nElements)
       case _ =>
     }
 

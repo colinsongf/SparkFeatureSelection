@@ -39,8 +39,7 @@ object NBtest {
 		val lambda = if (nonDefaut) args(4).toDouble else 1.0
 
 		val conf = new SparkConf().setAppName("MLlib Benchmarking")
-		conf.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
-		conf.set("spark.kryo.registrator", "org.lidiagroup.hmourit.tfg.examples.MyRegistrator")
+
 		val sc = new SparkContext(conf)
 		
 		def classify = (train: RDD[LabeledPoint]) => {

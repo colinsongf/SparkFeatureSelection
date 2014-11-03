@@ -162,14 +162,14 @@ class EntropyMinimizationDiscretizer private (
         // accumulate freqs from right to left
         var rightTotal = Array.fill(nLabels)(0L)
         for (i <- slice + 1 until numPartitions) {
-          rightTotal = (rightTotal, bcTotals.value(i)).zipped.map(_ + _)
+          for (j <- 0 until nLabels) rightTotal(j) += bcTotals.value(i)(j)
         }
 
         var leftAndRightAccum = Seq.empty[(Double, Array[Long], Array[Long], Array[Long])]
 
         for ((cand, freqs, leftFreqs) <- leftAccum) {
-          for (i <- 0 until nLabels) rightTotal(i) += freqs(i)
           leftAndRightAccum = (cand, freqs, leftFreqs, rightTotal.clone) +: leftAndRightAccum
+          for (i <- 0 until nLabels) rightTotal(i) += freqs(i)
         }
 
         leftAndRightAccum.iterator
@@ -185,7 +185,7 @@ class EntropyMinimizationDiscretizer private (
       for (i <- 0 until nLabels) total(i) += partition_total(i)
     }
 
-    val s  = total.reduce(_ + _)
+    val s  = total.sum
     val hs = InfoTheory.entropy(total.toSeq, s)
     val k  = total.filter(_ != 0).size
 
@@ -195,11 +195,11 @@ class EntropyMinimizationDiscretizer private (
         case (cand, _, leftFreqs, rightFreqs) =>
 
           val k1  = leftFreqs.filter(_ != 0).size
-          val s1  = if (k1 > 0) leftFreqs.reduce(_ + _) else 0
+          val s1  = if (k1 > 0) leftFreqs.sum else 0
           val hs1 = InfoTheory.entropy(leftFreqs, s1)
 
           val k2  = rightFreqs.filter(_ != 0).size
-          val s2  = if (k2 > 0) rightFreqs.reduce(_ + _) else 0
+          val s2  = if (k2 > 0) rightFreqs.sum else 0
           val hs2 = InfoTheory.entropy(rightFreqs, s2)
 
           val weightedHs = (s1 * hs1 + s2 * hs2) / s
