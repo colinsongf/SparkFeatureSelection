@@ -40,10 +40,13 @@ class EntropyMinimizationDiscretizer private (
       })
       val sortedValues = featureValues.sortByKey()
       val initialCandidates = initialThresholds(sortedValues, nLabels)
-      val thesholdsByFeature = if(initialCandidates.count < 1e6) {
-    	  getThresholds(initialCandidates.collect(), nLabels) 
+      val nCandsApprox = initialCandidates
+          .countApprox(2000)
+          .getFinalValue.high
+      val thesholdsByFeature = if(nCandsApprox < 1e5) {
+	  		getThresholds(initialCandidates.collect(), nLabels) 
       } else {
-    	  getThresholds(initialCandidates.persist(), nLabels)
+    	  	getThresholds(initialCandidates.persist(), nLabels)
       }
         
       thresholds += ((i, thesholdsByFeature))
@@ -128,7 +131,9 @@ class EntropyMinimizationDiscretizer private (
    *
    * @param candidates RDD of (value, label) pairs
    */
-  private def getThresholds(candidates: Array[(Double, Array[Long])], nLabels: Int): Seq[Double] = {
+  private def getThresholds(
+      candidates: Array[(Double, Array[Long])], 
+      nLabels: Int): Seq[Double] = {
 
     // Create queue
     val stack = new mutable.Queue[((Double, Double), Option[Double])]
@@ -158,7 +163,7 @@ class EntropyMinimizationDiscretizer private (
 
   /**
    * Selects one final thresholds among the candidates and returns two partitions to recurse
-   *
+   * (calculation parallelized using several nodes)
    * @param candidates RDD of (candidate, class frequencies between last and current candidate)
    * @param lastSelected last selected threshold to avoid selecting it again
    */
@@ -172,61 +177,47 @@ class EntropyMinimizationDiscretizer private (
     val sc = candidates.sparkContext
 
     // store total frequencies for each partition
-    val totals = sc.runJob(candidates, { case it =>
+    val totalsByPart = sc.runJob(candidates, { case it =>
       val accum = Array.fill(nLabels)(0L)
       for ((_, freqs) <- it) {
         for (i <- 0 until nLabels) accum(i) += freqs(i)
       }
       accum
     }: (Iterator[(Double, Array[Long])]) => Array[Long])
+    
+    var totals = Array.fill(nLabels)(0L)
+    for (t <- totalsByPart) totals = (totals, t).zipped.map(_ + _)
 
+    val bcTotalsByPart = sc.broadcast(totalsByPart)
     val bcTotals = sc.broadcast(totals)
 
     val result =
       candidates.mapPartitionsWithIndex({ (slice, it) =>
 
         // accumulate freqs from left to right
-        val leftTotal = Array.fill(nLabels)(0L)
-        for (i <- 0 until slice) {
-          for (j <- 0 until nLabels) leftTotal(j) += bcTotals.value(i)(j)
-        }
-
-        var leftAccum = Seq.empty[(Double, Array[Long], Array[Long])]
+        var leftTotal = Array.fill(nLabels)(0L)
+        for (i <- 0 until slice) 
+          leftTotal = (leftTotal, bcTotalsByPart.value(i)).zipped.map(_ + _)
+        
+        var entropyFreqs = Seq.empty[(Double, Array[Long], Array[Long], Array[Long])]
 
         for ((cand, freqs) <- it) {
-          for (i <- 0 until nLabels) leftTotal(i) += freqs(i)
-          leftAccum = (cand, freqs, leftTotal.clone) +: leftAccum
+          leftTotal = (leftTotal, freqs).zipped.map(_ + _)
+          val rightTotal = (bcTotals.value, leftTotal).zipped.map(_ - _)
+          entropyFreqs = (cand, freqs, leftTotal.clone, rightTotal) +: entropyFreqs
         }
-
-        // accumulate freqs from right to left
-        var rightTotal = Array.fill(nLabels)(0L)
-        for (i <- slice + 1 until numPartitions) {
-          for (j <- 0 until nLabels) rightTotal(j) += bcTotals.value(i)(j)
-        }
-
-        var leftAndRightAccum = Seq.empty[(Double, Array[Long], Array[Long], Array[Long])]
-
-        for ((cand, freqs, leftFreqs) <- leftAccum) {
-          leftAndRightAccum = (cand, freqs, leftFreqs, rightTotal.clone) +: leftAndRightAccum
-          for (i <- 0 until nLabels) rightTotal(i) += freqs(i)
-        }
-
-        leftAndRightAccum.iterator
+        
+        entropyFreqs.iterator
       })
 
     // calculate h(S)
     // s: number of elements
     // k: number of distinct classes
-    // hs: entropy
-
-    val total = Array.fill(nLabels)(0L)
-    for (partition_total <- totals) {
-      for (i <- 0 until nLabels) total(i) += partition_total(i)
-    }
-
-    val s  = total.sum
-    val hs = InfoTheory.entropy(total.toSeq, s)
-    val k  = total.filter(_ != 0).size
+    // hs: entropy  
+      
+    val s  = totals.sum
+    val hs = InfoTheory.entropy(totals.toSeq, s)
+    val k  = totals.filter(_ != 0).size
 
     // select best threshold according to the criteria
     val finalCandidates =
@@ -259,18 +250,12 @@ class EntropyMinimizationDiscretizer private (
       })
 
     // choose best candidates and partition data to make recursive calls
-    if (finalCandidates.count > 0) {
-      val selectedThreshold = finalCandidates.min._2
-      Some(selectedThreshold)
-    } else {
-      None
-    }
-
+    if (finalCandidates.count > 0) Some(finalCandidates.min._2) else None
   }
   
   /**
    * Selects one final thresholds among the candidates and returns two partitions to recurse
-   *
+   * (calculation parallelized using only one node (the driver))
    * @param candidates RDD of (candidate, class frequencies between last and current candidate)
    * @param lastSelected last selected threshold to avoid selecting it again
    */
