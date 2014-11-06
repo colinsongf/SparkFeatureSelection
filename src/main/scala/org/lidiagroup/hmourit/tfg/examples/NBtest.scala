@@ -63,7 +63,8 @@ object NBtest {
 			val criterion = new InfoThCriterionFactory("jmi")
 			val model = InfoThFeatureSelection.train(criterion, 
 		      data,
-		      90) // number of features to select (value from the best hit in ECBDL14)
+		      90, // number of features to select (value from the best hit in ECBDL14)
+		      0) // without pool 
 		    val reducedData = model.select(data)
 		    (model, reducedData)
 		}
