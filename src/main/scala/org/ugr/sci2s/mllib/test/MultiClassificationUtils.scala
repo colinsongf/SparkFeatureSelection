@@ -24,6 +24,7 @@ import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.mllib.linalg.Vectors
 import org.apache.hadoop.mapreduce.lib.input.InvalidInputException
 import org.apache.spark.mllib.regression.LabeledPoint
+import org.apache.spark.storage.StorageLevel
 
 object MultiClassificationUtils {
   
@@ -138,7 +139,6 @@ object MultiClassificationUtils {
 				// Save the obtained thresholds in a hdfs file (as a sequence)
 				val output = thresholds.foldLeft("")((str, elem) => str + 
 							elem._1 + "\t" + elem._2.mkString("\t") + "\n")
-				println(output)
 				val parThresholds = train.context.parallelize(Array(output), 1)
 				parThresholds.saveAsTextFile(outputDir + "discThresholds")
 				(discData, discAlgorithm.discretize(test), discTime)
@@ -169,7 +169,6 @@ object MultiClassificationUtils {
 				selectedAtts = featureSelector.getSelection
 				// Save the obtained FS scheme in a hdfs file (as a sequence)
 				val output = selectedAtts.mkString("\n")
-				println(output)
 				val parFSscheme = train.context.parallelize(Array(output), 1)
 				parFSscheme.saveAsTextFile(outputDir + "FSscheme")
 				(reductedData, featureSelector.select(test), FSTime)
@@ -221,13 +220,16 @@ object MultiClassificationUtils {
 			val accResults = dataFiles.map { case (trainFile, testFile) => {
 			  
 				var initAllTime = System.nanoTime()
-				val trainData = sc.textFile(trainFile).
+				var trainData = sc.textFile(trainFile).
 						//sample(false, samplingRate, seed.nextLong).
 						map(line => (KeelParser.parseLabeledPoint(bcTypeConv, line)))
-				val testData = sc.textFile(testFile).
+				trainData = sc.parallelize(trainData.take(100).toSeq, 12)
+				var testData = sc.textFile(testFile).
 						//sample(false, samplingRate, seed.nextLong).
 						map(line => (KeelParser.parseLabeledPoint(bcTypeConv, line)))
-				trainData.persist(); testData.persist()
+				testData = sc.parallelize(testData.take(100).toSeq, 12)
+				trainData.persist(StorageLevel.MEMORY_ONLY_SER) 
+				testData.persist(StorageLevel.MEMORY_ONLY_SER)
 				
 				// Discretization
 				var trData = trainData
