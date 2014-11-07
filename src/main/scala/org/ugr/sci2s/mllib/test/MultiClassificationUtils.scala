@@ -138,7 +138,11 @@ object MultiClassificationUtils {
 									.map(parseThresholds).collect.toMap
 				
 				val discAlgorithm = new EntropyMinimizationDiscretizerModel(thresholds)
-				(discAlgorithm.discretize(train), discAlgorithm.discretize(test), 0.0)			
+				val discTime = sc.textFile(outputDir + "disc_time_" + iteration)
+						.filter(!_.isEmpty())
+						.map(_.toDouble)
+						.first
+				(discAlgorithm.discretize(train), discAlgorithm.discretize(test), discTime)			
 				
 			} catch {
 				case iie: org.apache.hadoop.mapred.InvalidInputException =>
@@ -170,7 +174,12 @@ object MultiClassificationUtils {
 				val selectedAtts = sc.textFile(outputDir + "FSscheme_" + iteration).filter(!_.isEmpty())
 										.map(parseSelectedAtts).collect				
 				val featureSelector = new InfoThFeatureSelectionModel(selectedAtts)
-				(featureSelector.select(train), featureSelector.select(test), 0.0)
+				
+				val FSTime = sc.textFile(outputDir + "fs_time_" + iteration)
+						.filter(!_.isEmpty())
+						.map(_.toDouble)
+						.first
+				(featureSelector.select(train), featureSelector.select(test), FSTime)
 			} catch {
 				case iie: org.apache.hadoop.mapred.InvalidInputException =>
   					val initStartTime = System.nanoTime()
@@ -207,7 +216,8 @@ object MultiClassificationUtils {
 						
 				val classifficationTime = sc.textFile(outputDir + "classification_time_" + iteration)
 						.filter(!_.isEmpty())
-						.map(_.toDouble)						
+						.map(_.toDouble)	
+						.first
 				
 				(traValuesAndPreds, tstValuesAndPreds, classifficationTime)
 			} catch {
