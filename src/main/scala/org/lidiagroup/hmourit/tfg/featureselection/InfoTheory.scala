@@ -12,13 +12,13 @@ object InfoTheory {
   private val log2 = { x: Double => math.log(x) / math.log(2) }
 
   /**
-   * Calculates mutual information (MI) and condicional mutual information (CMI) simultanously
-   * for several variables (X) with another one (Y) condicioned by variables Z.
+   * Calculates mutual information (MI) and conditional mutual information (CMI) simultaneously
+   * for several variables (X) with another one (Y) conditioned by variables Z.
    *
    * @param data RDD of data containing the variables
    * @param varX Indexes of variables
    * @param varY Index of the second variable
-   * @param varZ Indexes of the condicioning values
+   * @param varZ Indexes of the conditioning values
    * @param n    Number of datapoints
    * @return     RDD of (variable, (MI, CMI))
    */
@@ -46,7 +46,7 @@ object InfoTheory {
         case ((x, y, z), q) =>
           varX.map(k => ((k, x(varX.indexOf(k)), y, z), q))
       }
-      .reduceByKey(_+_)
+      .reduceByKey(_ + _)
       // Separate for each combination
       .flatMap {
         case ((k, x, y, z), q) =>
