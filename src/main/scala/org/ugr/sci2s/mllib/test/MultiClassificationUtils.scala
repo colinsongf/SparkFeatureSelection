@@ -121,11 +121,12 @@ object MultiClassificationUtils {
 		def discretization(discretize: Option[(RDD[LabeledPoint]) => (DiscretizerModel[LabeledPoint], RDD[LabeledPoint])], 
 				train: RDD[LabeledPoint], 
 				test: RDD[LabeledPoint], 
-				outputDir: String): (RDD[LabeledPoint], RDD[LabeledPoint], Double) = {
+				outputDir: String,
+				iteration: Int) = {
 			var thresholds = Map.empty[Int, Seq[Double]]
 			var generateThs = false
 			try {
-				thresholds = train.context.textFile(outputDir + "discThresholds").filter(!_.isEmpty())
+				thresholds = train.context.textFile(outputDir + "discThresholds_" + iteration).filter(!_.isEmpty())
 									.map(parseThresholds).collect.toMap
 			} catch {
 				case iie: org.apache.hadoop.mapred.InvalidInputException => generateThs = true
@@ -140,7 +141,7 @@ object MultiClassificationUtils {
 				val output = thresholds.foldLeft("")((str, elem) => str + 
 							elem._1 + "\t" + elem._2.mkString("\t") + "\n")
 				val parThresholds = train.context.parallelize(Array(output), 1)
-				parThresholds.saveAsTextFile(outputDir + "discThresholds")
+				parThresholds.saveAsTextFile(outputDir + "discThresholds_" + iteration)
 				(discData, discAlgorithm.discretize(test), discTime)
 			} else {
 				val discAlgorithm = new EntropyMinimizationDiscretizerModel(thresholds)
@@ -151,12 +152,13 @@ object MultiClassificationUtils {
 		def featureSelection(fs: Option[(RDD[LabeledPoint]) => (FeatureSelectionModel[LabeledPoint], RDD[LabeledPoint])], 
 				train: RDD[LabeledPoint], 
 				test: RDD[LabeledPoint], 
-				outputDir: String): (RDD[LabeledPoint], RDD[LabeledPoint], Double) = {
+				outputDir: String,
+				iteration: Int) = {
 		  				
 			var selectedAtts = Array.empty[Int]
 			var doFS = false
 			try {
-				selectedAtts = train.context.textFile(outputDir + "FSscheme").filter(!_.isEmpty())
+				selectedAtts = train.context.textFile(outputDir + "FSscheme_" + iteration).filter(!_.isEmpty())
 									.map(parseSelectedAtts).collect
 			} catch {
 				case iie: org.apache.hadoop.mapred.InvalidInputException => doFS = true
@@ -170,8 +172,49 @@ object MultiClassificationUtils {
 				// Save the obtained FS scheme in a hdfs file (as a sequence)
 				val output = selectedAtts.mkString("\n")
 				val parFSscheme = train.context.parallelize(Array(output), 1)
-				parFSscheme.saveAsTextFile(outputDir + "FSscheme")
+				parFSscheme.saveAsTextFile(outputDir + "FSscheme_" + iteration)
 				(reductedData, featureSelector.select(test), FSTime)
+			} else {
+				val featureSelector = new InfoThFeatureSelectionModel(selectedAtts)
+				(featureSelector.select(train), featureSelector.select(test), 0.0)
+			}	  
+		}
+		
+		def classification(classify: (RDD[LabeledPoint]) => ClassificationModel, 
+				train: RDD[LabeledPoint], 
+				test: RDD[LabeledPoint], 
+				outputDir: String,
+				typeConv: Map[Double, String],
+				iteration: Int) = {
+		  				
+			var selectedAtts = Array.empty[Int]
+			var doClassification = false
+			try {
+				selectedAtts = train.context
+						.textFile(outputDir + "result_" + iteration + ".tst")
+						.filter(!_.isEmpty())
+						.map(parseSelectedAtts)
+						.collect
+			} catch {
+				case iie: org.apache.hadoop.mapred.InvalidInputException => doClassification = true
+			}
+			
+			if(doClassification) {			
+				val initStartTime = System.nanoTime()
+				val classificationModel = classify(train)
+				val classifficationTime = (System.nanoTime() - initStartTime) / 1e9
+				
+				val traValuesAndPreds = computePredictions(classificationModel, train)
+				val tstValuesAndPreds = computePredictions(classificationModel, test)
+				
+				// Print training fold results
+				val outputTrain = traValuesAndPreds.map(t => typeConv.getOrElse(t._1, "error") + " " +
+					    typeConv.getOrElse(t._2, "error"))   
+				outputTrain.coalesce(1, true).saveAsTextFile(outputDir + "result_" + iteration + ".tra")
+				val outputTest = tstValuesAndPreds.map(t => typeConv.getOrElse(t._1, "error") + " " +
+					    typeConv.getOrElse(t._2, "error"))    
+				outputTest.coalesce(1, true).saveAsTextFile(outputDir + "result_" + iteration + ".tst")				
+				(classificationModel, tstValuesAndPreds, classifficationTime)
 			} else {
 				val featureSelector = new InfoThFeatureSelectionModel(selectedAtts)
 				(featureSelector.select(train), featureSelector.select(test), 0.0)
@@ -202,6 +245,7 @@ object MultiClassificationUtils {
 			val dataInfo = sc.textFile(headerFile).collect.reduceLeft(_ + "\n" + _)
 					
 			val typeConversion = KeelParser.parseHeaderFile(sc, headerFile)	
+			val reverseConv = typeConversion.last.map(_.swap) // for last class
 			//val typeconv = typeConversion.asInstanceOf[Array[scala.collection.immutable.Map[String,scala.Double]]]
 			val binary = typeConversion.last.size < 3
 			//if(!binary) throw new IllegalArgumentException("Data class not binary...")
@@ -216,29 +260,29 @@ object MultiClassificationUtils {
 			    "DiscTime" -> Seq(),
 			    "FSTime" -> Seq(),
 			    "ClsTime" -> Seq())
+			    
+  			
 			
-			val accResults = dataFiles.map { case (trainFile, testFile) => {
-			  
-				var initAllTime = System.nanoTime()
-				var trainData = sc.textFile(trainFile).
+			val accResults = Seq.empty[(Double, Double)]
+			for (i <- 1 to dataFiles.length) {
+								var initAllTime = System.nanoTime()
+				val (trainFile, testFile) = dataFiles(i)
+				val trainData = sc.textFile(trainFile).
 						//sample(false, samplingRate, seed.nextLong).
 						map(line => (KeelParser.parseLabeledPoint(bcTypeConv, line)))
-				trainData = sc.parallelize(trainData.take(100).toSeq, 12)
-				var testData = sc.textFile(testFile).
+				val testData = sc.textFile(testFile).
 						//sample(false, samplingRate, seed.nextLong).
 						map(line => (KeelParser.parseLabeledPoint(bcTypeConv, line)))
-				testData = sc.parallelize(testData.take(100).toSeq, 12)
 				trainData.persist(StorageLevel.MEMORY_ONLY_SER) 
 				testData.persist(StorageLevel.MEMORY_ONLY_SER)
 				
 				// Discretization
-				var trData = trainData
-				var tstData = testData
+				var trData = trainData; var tstData = testData
 				var taskTime = 0.0
 				discretize match { 
-				  case Some(i) => 
+				  case Some(x) => 
 				    val (discTrData, discTstData, discTime) = discretization(
-								discretize, trData, tstData, outputDir)
+								discretize, trData, tstData, outputDir, i)
 					trData = discTrData
 					tstData = discTstData
 					taskTime = discTime
@@ -248,9 +292,9 @@ object MultiClassificationUtils {
 
 				// Feature Selection
 				val haveToFS = featureSelect match { 
-				  case Some(i) => 
+				  case Some(x) => 
 				    val (fsTrainData, fsTestData, fsTime) = featureSelection(
-					    featureSelect, trData, tstData, outputDir)
+					    featureSelect, trData, tstData, outputDir, i)
 					trData = fsTrainData
 					tstData = fsTestData
 					taskTime = fsTime
@@ -259,6 +303,7 @@ object MultiClassificationUtils {
 				times("FSTime") = times("FSTime") :+ taskTime
 				
 				// Run training algorithm to build the model
+				
 				val initStartTime = System.nanoTime()
 				val classificationModel = classify(trData)
 				val classifficationTime = (System.nanoTime() - initStartTime) / 1e9		
@@ -271,16 +316,77 @@ object MultiClassificationUtils {
 				
 				var fullTime = (System.nanoTime() - initAllTime) / 1e9
 				times("FullTime") = times("FullTime") :+ fullTime
-				
-				(traValuesAndPreds, tstValuesAndPreds)}
 			}
 			
 			// Do the output (fold results files and global result file)
 			//val dir = new File("results/" + outputDir); dir.mkdirs()
 			doOutput(outputDir, accResults, info, times.toMap, typeConversion)
 		}
-
 		
+		def doPartialOutput (outputDir: String, 
+				accResults: Array[(RDD[(Double, Double)], RDD[(Double, Double)])], 
+				info: Map[String, String],
+				timeResults: Map[String, Seq[Double]],
+				typeConv: Array[Map[String,Double]]) {
+		  
+  			val revConv = typeConv.last.map(_.swap) // for last class
+  			val default = "error"
+		  
+			var output = info.get("algoInfo").get + "Accuracy Results\tTrain\tTest\n"
+			val traFoldAcc= accResults.map(_._1).map(computeAccuracy)
+			val tstFoldAcc = accResults.map(_._2).map(computeAccuracy)
+			
+			// Aggregated statistics
+			val (aggAvgAccTr, aggStdAccTr) = calcAggStatistics(traFoldAcc)
+			val (aggAvgAccTst, aggStdAccTst) = calcAggStatistics(tstFoldAcc)
+			
+			
+			//val aggConfMatrix = ConfusionMatrix.apply(accResults.map(_._2).reduceLeft(_ union _))
+			val aggConfMatrix = ConfusionMatrix.apply(accResults.map(_._2).reduceLeft(_ union _), 
+			    typeConv.last)			    
+			
+			// Output of the algorithm
+			(0 until accResults.size).map { i =>
+				// Print training fold results
+				val (foldTrPred, foldTstPred) = accResults(i)
+				val strResults = foldTrPred.map(t => revConv.getOrElse(t._1, default) + " " +
+					    revConv.getOrElse(t._2, default))   
+				strResults.coalesce(1, true).
+					saveAsTextFile(outputDir + "result" + i + ".tra")
+				val strResults2 = foldTstPred.map(t => revConv.getOrElse(t._1, default) + " " +
+					    revConv.getOrElse(t._2, default))    
+				strResults2.coalesce(1, true)
+					.saveAsTextFile(outputDir + "result" + i + ".tst")
+				// Print fold results into the global result file*/
+				output += s"Fold $i:\t" +
+					traFoldAcc(i) + "\t" + tstFoldAcc(i) + "\n"
+			} 
+			
+  			val value = aggConfMatrix.fValue.foldLeft("")((str, nstr) => str + "\t" + nstr)
+  			
+			output += s"Avg Acc:\t$aggAvgAccTr\t$aggAvgAccTst\n"
+			output += s"Svd acc:\t$aggStdAccTr\t$aggStdAccTst\n"
+			output += "Mean Discretization Time:\t" + 
+					timeResults("DiscTime").sum / timeResults("DiscTime").size + " seconds.\n"
+			output += "Mean Feature Selection Time:\t" + 
+					timeResults("FSTime").sum / timeResults("FSTime").size + " seconds.\n"
+			output += "Mean Classification Time:\t" + 
+					timeResults("ClsTime").sum / timeResults("ClsTime").size + " seconds.\n"
+			output += "Mean Execution Time:\t" + 
+					timeResults("FullTime").sum / timeResults("FullTime").size + " seconds.\n"
+		    output += aggConfMatrix.fValue.foldLeft("\t")((str, t) => str + "\t" + t._1) + "\n"
+		    output += aggConfMatrix.fValue.foldLeft("F-Measure:")((str, t) => str + "\t" + t._2) + "\n"
+		    output += aggConfMatrix.precision.foldLeft("Precision:")((str, t) => str + "\t" + t._2) + "\n"
+		    output += aggConfMatrix.recall.foldLeft("Recall:")((str, t) => str + "\t" + t._2) + "\n"
+		    output += aggConfMatrix.specificity.foldLeft("Specificity:")((str, t) => str + "\t" + t._2) + "\n"
+		    output += aggConfMatrix.toString
+			println(output)
+			
+			val hdfsOutput = accResults(0)._1.context.parallelize(Array(output), 1)
+			hdfsOutput.saveAsTextFile(outputDir + "globalResult.txt")
+  			//val writer = new PrintWriter(new File(outputDir + "globalResult.txt"))
+			//writer.write(output); writer.close()
+
 		def doOutput (outputDir: String, 
 				accResults: Array[(RDD[(Double, Double)], RDD[(Double, Double)])], 
 				info: Map[String, String],

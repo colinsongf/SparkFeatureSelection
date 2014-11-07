@@ -40,8 +40,6 @@ object InfoTheory {
           varZ match {case Some(i) => Some(d(i)) case None => None}),
          1)
       })
-      // Count frequencies of combinations
-      .reduceByKey(_ + _)
       .flatMap {
         case ((x, y, z), q) =>
           varX.map(k => ((k, x(varX.indexOf(k)), y, z), q))
