@@ -135,7 +135,9 @@ object MultiClassificationUtils {
 				iteration: Int) = {
 		  
 			val sc = train.context
-		  
+		  	/** Check if the results for this fold are already written in disk
+		  	 *  if not, we calculate them
+		  	 **/
 			try {
 				val thresholds = sc.textFile(outputDir + "discThresholds_" + iteration).filter(!_.isEmpty())
 									.map(parseThresholds).collect.toMap
@@ -173,7 +175,9 @@ object MultiClassificationUtils {
 				iteration: Int) = {
 		  
 			val sc = train.context
-		  				
+		  	/** Check if the results for this fold are already written in disk
+		  	 *  if not, we calculate them
+		  	 **/
 			try {
 				val selectedAtts = sc.textFile(outputDir + "FSscheme_" + iteration).filter(!_.isEmpty())
 										.map(parseSelectedAtts).collect				
@@ -208,7 +212,11 @@ object MultiClassificationUtils {
 				outputDir: String,
 				typeConv: Array[Map[String, Double]],
 				iteration: Int) = {
-		  				
+		  
+		  	
+		  	/** Check if the results for this fold are already written in disk
+		  	 *  if not, we calculate them
+		  	 **/
 			try {
 				val sc = train.context
 				val traValuesAndPreds = sc.textFile(outputDir + "result_" + iteration + ".tra")
@@ -246,24 +254,34 @@ object MultiClassificationUtils {
 			}
 		}
 		
+		/**
+		 * Execute a MLlib experiment with three optional phases (discretization, feature selection and classification)
+		 * @param sc Spark context
+		 * @param kfold Number of folds in which is divided the dataset
+		 * @param discretize Optional function to discretize a dataset
+		 * @param featureSelect Optional function to reduce the set of features
+		 * @param classify Optional function to classify a dataset
+		 * @param headerFile Header file with the basis information about the dataset (arff format)
+		 * @param inputData File name or data directory where the data files are placed
+		 * @param outputDir HDFS directory for the experiment output
+		 * @param algoInfo Some basis information to be written
+		 */
+		
 		def executeExperiment(
-		    classify: Option[(RDD[LabeledPoint]) => ClassificationModel], 
+		    sc: SparkContext,
+		    kfold: Int,
 		    discretize: Option[(RDD[LabeledPoint]) => (DiscretizerModel[LabeledPoint], RDD[LabeledPoint])], 
 		    featureSelect: Option[(RDD[LabeledPoint]) => (FeatureSelectionModel[LabeledPoint], RDD[LabeledPoint])], 
-		    sc: SparkContext, 
+		    classify: Option[(RDD[LabeledPoint]) => ClassificationModel],
 		    headerFile: String, 
 		    inputData: Object, 
 		    outputDir: String, 
 		    algoInfo: String) {
-  		
-			val samplingRate = 0.01
-			val seed = new Random
-			
+
 			def getDataFiles(dirPath: String): Array[(String, String)] = {
-				val k = 5
 				val subDir = dirPath.split("/").last
 				def genName = (i: Int) => dirPath + "/" + subDir.replaceFirst("fold", i.toString)
-				val cvdata = for (i <- 1 to k) yield (genName(i) + "tra.data", genName(i) + "tst.data")
+				val cvdata = for (i <- 1 to kfold) yield (genName(i) + "tra.data", genName(i) + "tst.data")
 				cvdata.toArray
 			}
 			

@@ -90,8 +90,8 @@ object SVMtest {
 				s"regParam: $regParam\n" +
 				s"miniBatchFraction: $miniBatchFraction\n\n"
 		
-		MCU.executeExperiment(Some(classify), Some(discretization), Some(featureSelect), 
-		    sc, headerFile, dataDir, outputDir, algoInfo)
+		MCU.executeExperiment(sc, kfold = 5,Some(discretization), Some(featureSelect),  Some(classify),
+		    headerFile, dataDir, outputDir, algoInfo)
 		sc.stop()
 	}
     
