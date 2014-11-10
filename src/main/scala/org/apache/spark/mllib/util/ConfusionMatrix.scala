@@ -78,7 +78,6 @@ class ConfusionMatrixImpl(val dataAndPreds: RDD[(Double, Double)])
   val lablelIndexMap = dataAndPreds.map(_._1).distinct.collect.zipWithIndex.toMap
   	print(lablelIndexMap.toString)
   var innerMatrix = DoubleMatrix.zeros(lablelIndexMap.size, lablelIndexMap.size)
-  print(innerMatrix.toString)
   
   result.foreach {
     case (key, value) =>

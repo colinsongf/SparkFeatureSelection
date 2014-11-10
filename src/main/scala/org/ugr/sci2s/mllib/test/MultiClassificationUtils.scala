@@ -28,25 +28,27 @@ import org.apache.spark.storage.StorageLevel
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.rdd.EmptyRDD
+import org.apache.spark.mllib.util.ConfusionMatrixWithDict
+import org.apache.spark.mllib.util.ConfusionMatrixWithDict
 
 object MultiClassificationUtils {
   
-  		def parseThresholds (str: String): (Int, Seq[Double])= {
+  		private def parseThresholds (str: String): (Int, Seq[Double])= {
 			val tokens = str split "\t"
 			val points = tokens.slice(1, tokens.length).map(_.toDouble)
 			val attIndex = tokens(0).toInt
 			(attIndex, points.toSeq)
   		}
   		
-  		def parseSelectedAtts (str: String) = {
+  		private def parseSelectedAtts (str: String) = {
 			val tokens = str split "\t"
 			val attIndex = tokens(0).toInt
 			(attIndex)
   		}
   		
-  		def parsePredictions(str: String) = {
+  		private def parsePredictions(str: String) = {
 			val tokens = str split "\t"
-			(tokens(0), tokens(1))
+			(tokens(0).toDouble, tokens(1).toDouble)
   		}  		
   
   		def computePredictions(model: ClassificationModel, data: RDD[LabeledPoint], threshold: Double = .5) =
@@ -63,8 +65,8 @@ object MultiClassificationUtils {
 		
 		private val possitive = 1
 		private val negative = 0	
-				
-		def calcAggStatistics = (scores: Seq[Double]) => {
+		
+		private def calcAggStatistics = (scores: Seq[Double]) => {
 	  		val sum = scores.reduce(_ + _)
 	  		val mean = sum / scores.length
 	  		val devs = scores.map(score => (score - mean) * (score - mean))
@@ -73,14 +75,14 @@ object MultiClassificationUtils {
 		}
 		
 		@Experimental
-		def doTraining (training: (RDD[LabeledPoint]) => ClassificationModel, isBinary: Boolean,
+		private def doTraining (training: (RDD[LabeledPoint]) => ClassificationModel, isBinary: Boolean,
 		    data: RDD[LabeledPoint]) {
 			if(isBinary) training(data)
 			else OVATraining(training, data)
 		}
 		
 		@Experimental
-		def OVATraining (training: (RDD[LabeledPoint]) => ClassificationModel, 
+		private def OVATraining (training: (RDD[LabeledPoint]) => ClassificationModel, 
 		    data: RDD[LabeledPoint]): Array[(Double, Option[ClassificationModel])] = {
 			// Histogram of labels
 			val classHist = data.map(point => (point.label, 1L)).reduceByKey(_ + _).collect.sortBy(_._2)
@@ -106,7 +108,7 @@ object MultiClassificationUtils {
 		}
 		
 		@Experimental
-		def computeOVAPredictions (ovaModels: Array[(Double, Option[ClassificationModel])], 
+		private def computeOVAPredictions (ovaModels: Array[(Double, Option[ClassificationModel])], 
 		    test: RDD[LabeledPoint], threshold: Double = 1.): RDD[(Double, Double)] = {
 		  
 			def recursiveOVA (point: LabeledPoint, index: Int): Double = {
@@ -125,7 +127,8 @@ object MultiClassificationUtils {
 			
 		}
 		
-		def discretization(discretize: Option[(RDD[LabeledPoint]) => (DiscretizerModel[LabeledPoint], RDD[LabeledPoint])], 
+		private def discretization(
+				discretize: (RDD[LabeledPoint]) => (DiscretizerModel[LabeledPoint], RDD[LabeledPoint]), 
 				train: RDD[LabeledPoint], 
 				test: RDD[LabeledPoint], 
 				outputDir: String,
@@ -147,7 +150,7 @@ object MultiClassificationUtils {
 			} catch {
 				case iie: org.apache.hadoop.mapred.InvalidInputException =>
 					val initStartTime = System.nanoTime()
-					val (discAlgorithm, discData) = discretize.get(train)
+					val (discAlgorithm, discData) = discretize(train)
 					val discTime = (System.nanoTime() - initStartTime) / 1e9
 					val thresholds = discAlgorithm.getThresholds
 					// Save the obtained thresholds in a HDFS file (as a sequence)
@@ -162,7 +165,8 @@ object MultiClassificationUtils {
 			}		
 		}
 		
-		def featureSelection(fs: Option[(RDD[LabeledPoint]) => (FeatureSelectionModel[LabeledPoint], RDD[LabeledPoint])], 
+		private def featureSelection(
+				fs: (RDD[LabeledPoint]) => (FeatureSelectionModel[LabeledPoint], RDD[LabeledPoint]), 
 				train: RDD[LabeledPoint], 
 				test: RDD[LabeledPoint], 
 				outputDir: String,
@@ -183,7 +187,7 @@ object MultiClassificationUtils {
 			} catch {
 				case iie: org.apache.hadoop.mapred.InvalidInputException =>
   					val initStartTime = System.nanoTime()
-					val (featureSelector, reductedData) = fs.get(train)
+					val (featureSelector, reductedData) = fs(train)
 					val FSTime = (System.nanoTime() - initStartTime) / 1e9
 					val selectedAtts = featureSelector.getSelection
 					// Save the obtained FS scheme in a HDFS file (as a sequence)
@@ -197,7 +201,8 @@ object MultiClassificationUtils {
 			}
 		}
 		
-		def classification(classify: (RDD[LabeledPoint]) => ClassificationModel, 
+		private def classification(
+				classify: (RDD[LabeledPoint]) => ClassificationModel, 
 				train: RDD[LabeledPoint], 
 				test: RDD[LabeledPoint], 
 				outputDir: String,
@@ -241,7 +246,8 @@ object MultiClassificationUtils {
 			}
 		}
 		
-		def executeExperiment(classify: (RDD[LabeledPoint]) => ClassificationModel, 
+		def executeExperiment(
+		    classify: Option[(RDD[LabeledPoint]) => ClassificationModel], 
 		    discretize: Option[(RDD[LabeledPoint]) => (DiscretizerModel[LabeledPoint], RDD[LabeledPoint])], 
 		    featureSelect: Option[(RDD[LabeledPoint]) => (FeatureSelectionModel[LabeledPoint], RDD[LabeledPoint])], 
 		    sc: SparkContext, 
@@ -280,9 +286,13 @@ object MultiClassificationUtils {
 			    "DiscTime" -> Seq(),
 			    "FSTime" -> Seq(),
 			    "ClsTime" -> Seq())
+			
+			val nFolds = dataFiles.length
+			//val confusionMatrices = Seq.empty[ConfusionMatrixWithDict]
+			val predictions = Array.empty[(RDD[(Double, Double)], RDD[(Double, Double)])]
 			    
 			val accTraResults = Seq.empty[(Double, Double)]
-			for (i <- 1 to dataFiles.length) {
+			for (i <- 0 until nFolds) {
 								var initAllTime = System.nanoTime()
 				val (trainFile, testFile) = dataFiles(i)
 				val trainData = sc.textFile(trainFile).
@@ -298,9 +308,9 @@ object MultiClassificationUtils {
 				var trData = trainData; var tstData = testData
 				var taskTime = 0.0
 				discretize match { 
-				  case Some(x) => 
+				  case Some(disc) => 
 				    val (discTrData, discTstData, discTime) = discretization(
-								discretize, trData, tstData, outputDir, i)
+								disc, trData, tstData, outputDir, i)
 					trData = discTrData
 					tstData = discTstData
 					taskTime = discTime
@@ -309,10 +319,10 @@ object MultiClassificationUtils {
 				times("DiscTime") = times("DiscTime") :+ taskTime
 
 				// Feature Selection
-				val haveToFS = featureSelect match { 
-				  case Some(x) => 
-				    val (fsTrainData, fsTestData, fsTime) = featureSelection(
-					    featureSelect, trData, tstData, outputDir, i)
+				featureSelect match { 
+				  case Some(fs) => 
+				    val (fsTrainData, fsTestData, fsTime) = 
+				      featureSelection(fs, trData, tstData, outputDir, i)
 					trData = fsTrainData
 					tstData = fsTestData
 					taskTime = fsTime
@@ -320,9 +330,19 @@ object MultiClassificationUtils {
 				}
 				times("FSTime") = times("FSTime") :+ taskTime
 				
-				// Run training algorithm to build the model
-				val results = classification(classify, trainData, testData, 
+				//Classification
+				classify match { 
+				  case Some(cls) => 
+				    val (traValuesAndPreds, tstValuesAndPreds, classifficationTime) = 
+				  	classification(cls, trData, tstData, 
 				    outputDir, typeConversion, i)
+					taskTime = classifficationTime
+					/* Confusion matrix for the test set */
+					//confusionMatrices :+ ConfusionMatrix.apply(tstValuesAndPreds, typeConversion.last)
+					predictions :+ (traValuesAndPreds, tstValuesAndPreds)
+				  case None => taskTime = 0.0 /* criteria not fulfilled, do not classify */
+				}
+				times("ClsTime") = times("ClsTime") :+ taskTime
 				
 				trainData.unpersist(); testData.unpersist()
 				
@@ -330,51 +350,30 @@ object MultiClassificationUtils {
 				times("FullTime") = times("FullTime") :+ fullTime
 			}
 			
-			// Do the output (fold results files and global result file)
-			//val dir = new File("results/" + outputDir); dir.mkdirs()
-			printResults(outputDir, accResults, info, times.toMap, typeConversion)
+			// Print the aggregated results
+			printResults(outputDir, predictions, info, times.toMap, typeConversion)
 		}
 
-		def printResults(
+		private def printResults(
 				outputDir: String, 
-				accResults: Array[(RDD[(Double, Double)], RDD[(Double, Double)])], 
+				predictions: Array[(RDD[(Double, Double)], RDD[(Double, Double)])], 
 				info: Map[String, String],
 				timeResults: Map[String, Seq[Double]],
 				typeConv: Array[Map[String,Double]]) {
 		  
   			val revConv = typeConv.last.map(_.swap) // for last class
-  			
 			var output = info.get("algoInfo").get + "Accuracy Results\tTrain\tTest\n"
-			val traFoldAcc= accResults.map(_._1).map(computeAccuracy)
-			val tstFoldAcc = accResults.map(_._2).map(computeAccuracy)
-			
-			// Aggregated statistics
-			val (aggAvgAccTr, aggStdAccTr) = calcAggStatistics(traFoldAcc)
-			val (aggAvgAccTst, aggStdAccTst) = calcAggStatistics(tstFoldAcc)
-			
-			
-			val aggConfMatrix = ConfusionMatrix.apply(accResults.map(_._2).reduceLeft(_ union _), 
-			    typeConv.last)			    
-			
-			// Output of the algorithm
-			(0 until accResults.size).map { i =>
-				// Print training fold results
-				/*val (foldTrPred, foldTstPred) = accResults(i)
-				val strResults = foldTrPred.map(t => revConv.getOrElse(t._1, default) + " " +
-					    revConv.getOrElse(t._2, default))   
-				strResults.coalesce(1, true).
-					saveAsTextFile(outputDir + "result" + i + ".tra")
-				val strResults2 = foldTstPred.map(t => revConv.getOrElse(t._1, default) + " " +
-					    revConv.getOrElse(t._2, default))    
-				strResults2.coalesce(1, true)
-					.saveAsTextFile(outputDir + "result" + i + ".tst") /
-					
-				// Print fold results into the global result file*/
+			val traFoldAcc= predictions.map(_._1).map(computeAccuracy)
+			val tstFoldAcc = predictions.map(_._2).map(computeAccuracy)		
+			// Print fold results into the global result file*/
+			for (i <- 0 until predictions.size){
 				output += s"Fold $i:\t" +
 					traFoldAcc(i) + "\t" + tstFoldAcc(i) + "\n"
 			} 
 			
-  			
+			// Aggregated statistics
+			val (aggAvgAccTr, aggStdAccTr) = calcAggStatistics(traFoldAcc)
+			val (aggAvgAccTst, aggStdAccTst) = calcAggStatistics(tstFoldAcc)
 			output += s"Avg Acc:\t$aggAvgAccTr\t$aggAvgAccTst\n"
 			output += s"Svd acc:\t$aggStdAccTr\t$aggStdAccTst\n"
 			output += "Mean Discretization Time:\t" + 
@@ -385,6 +384,10 @@ object MultiClassificationUtils {
 					timeResults("ClsTime").sum / timeResults("ClsTime").size + " seconds.\n"
 			output += "Mean Execution Time:\t" + 
 					timeResults("FullTime").sum / timeResults("FullTime").size + " seconds.\n"
+					
+			// Confusion Matrix		
+			val aggConfMatrix = ConfusionMatrix.apply(predictions.map(_._2).reduceLeft(_ union _), 
+			    typeConv.last)	
 		    output += aggConfMatrix.fValue.foldLeft("\t")((str, t) => str + "\t" + t._1) + "\n"
 		    output += aggConfMatrix.fValue.foldLeft("F-Measure:")((str, t) => str + "\t" + t._2) + "\n"
 		    output += aggConfMatrix.precision.foldLeft("Precision:")((str, t) => str + "\t" + t._2) + "\n"
@@ -393,9 +396,8 @@ object MultiClassificationUtils {
 		    output += aggConfMatrix.toString
 			println(output)
 			
-			val hdfsOutput = accResults(0)._1.context.parallelize(Array(output), 1)
+			val sc = predictions(0)._1.context
+			val hdfsOutput = sc.parallelize(Array(output), 1)
 			hdfsOutput.saveAsTextFile(outputDir + "globalResult.txt")
-  			//val writer = new PrintWriter(new File(outputDir + "globalResult.txt"))
-			//writer.write(output); writer.close()
 		}
 }
