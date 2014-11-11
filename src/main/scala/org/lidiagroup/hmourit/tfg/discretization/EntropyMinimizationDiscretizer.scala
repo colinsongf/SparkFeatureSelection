@@ -34,12 +34,33 @@ class EntropyMinimizationDiscretizer private (
     val labels2Int = data.context.broadcast(data.map(_.label).distinct.collect.zipWithIndex.toMap)
     val nLabels = labels2Int.value.size
     var thresholds = Map.empty[Int, Seq[Double]]
+    
     for (i <- continuousFeaturesIndexes) {
-      val featureValues = data.map({
-  		case LabeledPoint(label, values) => (values.toArray(i), labels2Int.value(label))
+      val featureValues = data.map({case LabeledPoint(label, values) => 
+       	  val frequencies = Array.fill[Long](nLabels)(0L)
+       	  frequencies(labels2Int.value(label)) = 1L
+       	  (values.toArray(i), frequencies)       	  
       })
-      val sortedValues = featureValues.sortByKey()
-      val initialCandidates = initialThresholds(sortedValues, nLabels)
+      // Group the class values by feature value
+      val featureValuesFreqs = featureValues
+      		.reduceByKey((_,_).zipped.map(_ + _))
+      	
+      // Sort these values to perform the boundary points evaluation
+      val sortedValues = featureValuesFreqs.sortByKey()
+      
+      // get the first elements of each partition
+      val sc = data.context
+      val firstsByPart = sc.runJob(sortedValues, { case it =>
+      		it.next
+      	}: (Iterator[(Double, Array[Long])]) => (Double, Array[Long]))
+      	
+      println("First Elements: " + i + "\n" + firstsByPart.mkString("\n"))
+      
+      // Get the boundary points with its frequencies
+      val initialCandidates = initialThresholds(sortedValues, firstsByPart)
+      
+      println("Attribute: " + i + "\n" + initialCandidates.collect.sortBy(_._1).map(_._2.mkString(",")).mkString("\n"))
+      
       val nCandsApprox = initialCandidates
           .countApprox(2000)
           .getFinalValue.high
@@ -57,35 +78,41 @@ class EntropyMinimizationDiscretizer private (
   }
 
   /**
-   * Calculates the initial candidate tresholds for a feature
-   * @param data RDD of (value, label) pairs.
-   * @param nLabels Number of distinct labels in the dataset.
-   * @return RDD of (candidate, class frequencies between last and current candidate) pairs.
+   * Calculates the initial candidate thresholds for a feature
+   * @param data RDD (value, frequencies) of DISTINCT values for one particular.
+   * @param firstElements the first elements of each partition to perform the last operation
+   * @return RDD of (boundary point, class frequencies between last and current candidate) pairs.
    */
-  private def initialThresholds(data: RDD[(Double, Int)], nLabels: Int) = {
-    data.mapPartitions({ it =>
-      var lastX = Double.NegativeInfinity
-      var lastY = Int.MinValue
+  private def initialThresholds(
+      points: RDD[(Double, Array[Long])], 
+      firstElements: Array[(Double, Array[Long])]) = {
+	  
+    val bcFirstsByPart = points.context.broadcast(firstElements)
+    val numPartitions = points.partitions.length
+    
+    points.mapPartitionsWithIndex({ (index, it) =>
+      
       var result = Seq.empty[(Double, Array[Long])]
-      var freqs = Array.fill[Long](nLabels)(0L)
-
-      for ((x, y) <- it) {
-        if (x != lastX && y != lastY && lastX != Double.NegativeInfinity) {
-          // new candidate and interval
-          result = ((x + lastX) / 2, freqs) +: result
-          freqs = Array.fill[Long](nLabels)(0L)
-          freqs(y) = 1L
-        } else {
-          // we continue on the same interval
-          freqs(y) += 1
-        }
-        lastX = x
-        lastY = y
+      var (lastX, lastFreqs) = it.next()
+      
+      for ((x, freqs) <- it) {
+          if(freqs != lastFreqs) {
+        	  // new boundary point
+        	  result = ((x + lastX) / 2, lastFreqs) +: result
+          }
+          lastX = x
+		  lastFreqs = freqs
       }
-
-      // we add last element as a candidate threshold for convenience
-      result = (lastX, freqs) +: result
-
+      
+      // last element is compared with the first element of the next partition
+      if ((index + 1) < numPartitions) {
+    	  val (x, freqs) = bcFirstsByPart.value(index + 1)
+    	  if (freqs != lastFreqs) {
+    		  // last boundary point
+        	  result = ((x + lastX) / 2, lastFreqs) +: result
+          }
+      }
+      
       result.reverse.toIterator
     })
   }
@@ -100,11 +127,11 @@ class EntropyMinimizationDiscretizer private (
     // Create queue
     val stack = new mutable.Queue[((Double, Double), Option[Double])]
 
-    // Insert first in the stack
+    // Insert the extreme values in the stack
     stack.enqueue(((Double.NegativeInfinity, Double.PositiveInfinity), None))
     var result = Seq(Double.NegativeInfinity)
 
-    // While more elements to eval, continue
+    // As long as there are more elements to evaluate, we continue
     while(stack.length > 0 && result.size < this.maxBins){
 
       val (bounds, lastThresh) = stack.dequeue
@@ -194,7 +221,7 @@ class EntropyMinimizationDiscretizer private (
     val result =
       candidates.mapPartitionsWithIndex({ (slice, it) =>
 
-        // accumulate freqs from left to right
+        // accumulate frequencies from left to right
         var leftTotal = Array.fill(nLabels)(0L)
         for (i <- 0 until slice) 
           leftTotal = (leftTotal, bcTotalsByPart.value(i)).zipped.map(_ + _)
@@ -219,17 +246,17 @@ class EntropyMinimizationDiscretizer private (
     val hs = InfoTheory.entropy(totals.toSeq, s)
     val k  = totals.filter(_ != 0).size
 
-    // select best threshold according to the criteria
+    // select the best threshold according to the criteria
     val finalCandidates =
       result.flatMap({
         case (cand, _, leftFreqs, rightFreqs) =>
 
           val k1  = leftFreqs.filter(_ != 0).size
-          val s1  = if (k1 > 0) leftFreqs.sum else 0
+          val s1  = leftFreqs.sum
           val hs1 = InfoTheory.entropy(leftFreqs, s1)
 
           val k2  = rightFreqs.filter(_ != 0).size
-          val s2  = if (k2 > 0) rightFreqs.sum else 0
+          val s2  = rightFreqs.sum
           val hs2 = InfoTheory.entropy(rightFreqs, s2)
 
           val weightedHs = (s1 * hs1 + s2 * hs2) / s
@@ -242,15 +269,10 @@ class EntropyMinimizationDiscretizer private (
               case Some(last) => criterion = criterion && (cand != last)
           }
 
-          if (criterion) {
-            Seq((weightedHs, cand))
-          } else {
-            Seq.empty[(Double, Double)]
-          }
+          if (criterion) Seq((weightedHs, cand)) else Seq.empty[(Double, Double)]
       })
 
-    // choose best candidates and partition data to make recursive calls
-    if (finalCandidates.count > 0) Some(finalCandidates.min._2) else None
+      if (finalCandidates.count > 0) Some(finalCandidates.min._2) else None
   }
   
   /**

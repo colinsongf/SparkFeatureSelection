@@ -55,7 +55,7 @@ class EntropyMinimizationDiscretizerModel (val thresholds: Map[Int, Seq[Double]]
    * Discretizes a value with a set of intervals.
    *
    * @param value The value to be discretized
-   * @param thresholds Thresholds used to asign a discrete value
+   * @param thresholds Thresholds used to assign a discrete value
    */
   private def assignDiscreteValue(value: Double, thresholds: Seq[Double]) = {
     var aux = thresholds.zipWithIndex

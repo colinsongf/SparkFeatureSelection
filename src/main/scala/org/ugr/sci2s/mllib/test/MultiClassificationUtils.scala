@@ -155,6 +155,7 @@ object MultiClassificationUtils {
 					val (discAlgorithm, discData) = discretize(train)
 					val discTime = (System.nanoTime() - initStartTime) / 1e9
 					val thresholds = discAlgorithm.getThresholds
+						.toArray.sortBy(_._1)
 					// Save the obtained thresholds in a HDFS file (as a sequence)
 					val output = thresholds.foldLeft("")((str, elem) => str + 
 								elem._1 + "\t" + elem._2.mkString("\t") + "\n")
@@ -214,11 +215,11 @@ object MultiClassificationUtils {
 				iteration: Int) = {
 		  
 		  	
+			val sc = train.context
 		  	/** Check if the results for this fold are already written in disk
 		  	 *  if not, we calculate them
 		  	 **/
 			try {
-				val sc = train.context
 				val traValuesAndPreds = sc.textFile(outputDir + "result_" + iteration + ".tra")
 						.filter(!_.isEmpty())
 						.map(parsePredictions)
@@ -237,7 +238,7 @@ object MultiClassificationUtils {
 				case iie: org.apache.hadoop.mapred.InvalidInputException => 
 					val initStartTime = System.nanoTime()	
 					val classificationModel = classify(train)
-					val classifficationTime = (System.nanoTime() - initStartTime) / 1e9
+					val classificationTime = (System.nanoTime() - initStartTime) / 1e9
 					
 					val traValuesAndPreds = computePredictions(classificationModel, train)
 					val tstValuesAndPreds = computePredictions(classificationModel, test)
@@ -249,8 +250,11 @@ object MultiClassificationUtils {
 					outputTrain.saveAsTextFile(outputDir + "result_" + iteration + ".tra")
 					val outputTest = tstValuesAndPreds.map(t => reverseConv.getOrElse(t._1, "") + " " +
 						    reverseConv.getOrElse(t._2, ""))    
-					outputTest.saveAsTextFile(outputDir + "result_" + iteration + ".tst")				
-					(traValuesAndPreds, tstValuesAndPreds, classifficationTime)
+					outputTest.saveAsTextFile(outputDir + "result_" + iteration + ".tst")		
+					val strTime = sc.parallelize(classificationTime.toString, 1)
+					strTime.saveAsTextFile(outputDir + "classification_time_" + iteration)
+					
+					(traValuesAndPreds, tstValuesAndPreds, classificationTime)
 			}
 		}
 		
@@ -307,7 +311,7 @@ object MultiClassificationUtils {
 			
 			val nFolds = dataFiles.length
 			//val confusionMatrices = Seq.empty[ConfusionMatrixWithDict]
-			val predictions = Array.empty[(RDD[(Double, Double)], RDD[(Double, Double)])]
+			var predictions = Array.empty[(RDD[(Double, Double)], RDD[(Double, Double)])]
 			    
 			val accTraResults = Seq.empty[(Double, Double)]
 			for (i <- 0 until nFolds) {
@@ -352,12 +356,11 @@ object MultiClassificationUtils {
 				classify match { 
 				  case Some(cls) => 
 				    val (traValuesAndPreds, tstValuesAndPreds, classifficationTime) = 
-				  	classification(cls, trData, tstData, 
-				    outputDir, typeConversion, i)
+				  		classification(cls, trData, tstData, outputDir, typeConversion, i)
 					taskTime = classifficationTime
 					/* Confusion matrix for the test set */
 					//confusionMatrices :+ ConfusionMatrix.apply(tstValuesAndPreds, typeConversion.last)
-					predictions :+ (traValuesAndPreds, tstValuesAndPreds)
+					predictions = predictions :+ (traValuesAndPreds, tstValuesAndPreds)
 				  case None => taskTime = 0.0 /* criteria not fulfilled, do not classify */
 				}
 				times("ClsTime") = times("ClsTime") :+ taskTime
@@ -381,15 +384,15 @@ object MultiClassificationUtils {
 		  
   			val revConv = typeConv.last.map(_.swap) // for last class
 			var output = info.get("algoInfo").get + "Accuracy Results\tTrain\tTest\n"
-			val traFoldAcc= predictions.map(_._1).map(computeAccuracy)
+			val traFoldAcc = predictions.map(_._1).map(computeAccuracy)
 			val tstFoldAcc = predictions.map(_._2).map(computeAccuracy)		
-			// Print fold results into the global result file*/
+			// Print fold results into the global result file
 			for (i <- 0 until predictions.size){
 				output += s"Fold $i:\t" +
 					traFoldAcc(i) + "\t" + tstFoldAcc(i) + "\n"
 			} 
 			
-			// Aggregated statistics
+  			// Aggregated statistics
 			val (aggAvgAccTr, aggStdAccTr) = calcAggStatistics(traFoldAcc)
 			val (aggAvgAccTst, aggStdAccTst) = calcAggStatistics(tstFoldAcc)
 			output += s"Avg Acc:\t$aggAvgAccTr\t$aggAvgAccTst\n"
