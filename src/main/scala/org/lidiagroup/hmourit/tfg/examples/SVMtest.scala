@@ -38,19 +38,21 @@ object SVMtest {
 		
 		val initStartTime = System.nanoTime()
 
-		if (args.length < 3) {
-		  System.err.println("Usage: SVMtest <header-file> <data-dir> <output-dir> [<numIter> <stepSize> <regParam> <miniBatchFraction>]")
+		if (args.length < 4) {
+		  System.err.println("Usage: SVMtest <header-file> <train-file> <test-file> <output-dir>" + 
+		      "[<numIter> <stepSize> <regParam> <miniBatchFraction>]")
 		  System.exit(1)
 		}
 		
 		val headerFile = args(0)
-		val dataDir = args(1)
-		val outputDir = args(2) + "/"
-		val nonDefaut = args.length > 3
-		val numIter = if(nonDefaut) args(3).toInt else 100 
-		val stepSize = if(nonDefaut) args(4).toDouble else 1.0 
-		val regParam = if(nonDefaut) args(5).toDouble else 1.0 
-		val miniBatchFraction = if(nonDefaut) args(6).toDouble else 1.0
+		val trainFile = args(1)
+		val testFile = args(2)
+		val outputDir = args(3) + "/"
+		val nonDefaut = args.length > 4
+		val numIter = if(nonDefaut) args(4).toInt else 100 
+		val stepSize = if(nonDefaut) args(5).toDouble else 1.0 
+		val regParam = if(nonDefaut) args(6).toDouble else 1.0 
+		val miniBatchFraction = if(nonDefaut) args(7).toDouble else 1.0
 		val conf = new SparkConf().setAppName("MLlib Benchmarking")
 		
 		//conf.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
@@ -90,8 +92,8 @@ object SVMtest {
 				s"regParam: $regParam\n" +
 				s"miniBatchFraction: $miniBatchFraction\n\n"
 		
-		MCU.executeExperiment(sc, kfold = 5,Some(discretization), Some(featureSelect),  Some(classify),
-		    headerFile, dataDir, outputDir, algoInfo)
+		MCU.executeExperiment(sc, None, None,  Some(classify),
+		    headerFile, (trainFile, testFile), outputDir, algoInfo)
 		sc.stop()
 	}
     

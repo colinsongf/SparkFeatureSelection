@@ -74,7 +74,7 @@ object NBtest {
 		val algoInfo: String = s"Algorithm: Naive Bayes (NB)\n" + 
 				s"lambda: $lambda\n\n"
 				
-		MCU.executeExperiment(sc, kfold = 5,Some(discretization), Some(featureSelect),  Some(classify),
+		MCU.executeExperiment(sc, Some(discretization), Some(featureSelect),  Some(classify),
 		    headerFile, (trainFile, testFile), outputDir, algoInfo)
 		sc.stop()
 	}

@@ -273,7 +273,6 @@ object MultiClassificationUtils {
 		
 		def executeExperiment(
 		    sc: SparkContext,
-		    kfold: Int,
 		    discretize: Option[(RDD[LabeledPoint]) => (DiscretizerModel[LabeledPoint], RDD[LabeledPoint])], 
 		    featureSelect: Option[(RDD[LabeledPoint]) => (FeatureSelectionModel[LabeledPoint], RDD[LabeledPoint])], 
 		    classify: Option[(RDD[LabeledPoint]) => ClassificationModel],
@@ -282,10 +281,10 @@ object MultiClassificationUtils {
 		    outputDir: String, 
 		    algoInfo: String) {
 
-			def getDataFiles(dirPath: String): Array[(String, String)] = {
+			def getDataFiles(dirPath: String, k: Int): Array[(String, String)] = {
 				val subDir = dirPath.split("/").last
 				def genName = (i: Int) => dirPath + "/" + subDir.replaceFirst("fold", i.toString)
-				val cvdata = for (i <- 1 to kfold) yield (genName(i) + "tra.data", genName(i) + "tst.data")
+				val cvdata = for (i <- 1 to k) yield (genName(i) + "tra.data", genName(i) + "tst.data")
 				cvdata.toArray
 			}
 			
@@ -299,7 +298,7 @@ object MultiClassificationUtils {
 			//if(!binary) throw new IllegalArgumentException("Data class not binary...")
 			val bcTypeConv = sc.broadcast(typeConversion).value
 			val dataFiles = inputData match {
-			  case s: String => getDataFiles(s)
+			  case (dataPath: String, kfold: Int) => getDataFiles(dataPath, kfold)
 			  case (train: String, test: String) => Array((train, test))
 			}			
 			

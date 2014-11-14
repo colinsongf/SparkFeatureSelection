@@ -5,6 +5,7 @@ import java.util.ArrayList
 import org.apache.spark.SparkContext
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.mllib.linalg.Vectors
+import org.apache.spark.SparkContext
 
 object KeelParser {
   
@@ -14,10 +15,9 @@ object KeelParser {
   	  var arr: ArrayList[String] = new ArrayList[String]
   	  // Important to collect and work with arrays instead of RDD's
   	  for(x <- header.toArray) arr.add(x)
-  	 
   	  new InstanceSet().parseHeaderFromString(arr, true)
   	  
-  	  var conv: Array[Map[String, Double]] = new Array[Map[String, Double]](Attributes.getNumAttributes)
+  	  val conv = new Array[Map[String, Double]](Attributes.getNumAttributes)
   	  for(i <- 0 until Attributes.getNumAttributes) {
   		  conv(i) = Map()
   		  if(Attributes.getAttribute(i).getType == Attribute.NOMINAL){
@@ -34,29 +34,25 @@ object KeelParser {
   
 	def parseLabeledPoint (conv: Array[Map[String, Double]], str: String): LabeledPoint = {
 	  
-		val tokens = str split ","
-		var x = new Array[Double](tokens.length)
-		var y = 0.0
+		val tokens = str split ","		
+		require(tokens.length == conv.length)
 		
-		for(i <- 0 until tokens.length) {
-		  val value = if(conv(i).isEmpty) tokens(i).toDouble else conv(i)(tokens(i))
-		  if(i < (tokens.length - 1)) x(i) = value else y = value
-		}
+		val arr = (conv, tokens).zipped
+				.map((c, elem) => c.getOrElse(elem, elem.toDouble))
+		val features = arr.slice(0, arr.length - 1)
+		val label = arr.last
 		
-		new LabeledPoint(y, Vectors.dense(x))
+		new LabeledPoint(label, Vectors.dense(features))
 	}
 	
-	def parsePoint (conv: Array[Map[String, Double]], str: String, omitLast: Boolean): org.apache.spark.mllib.linalg.Vector = {
+	def parsePoint (conv: Array[Map[String, Double]], str: String, omitLast: Boolean) = {
 	  
-		val tokens = str split ","
-		var x = new Array[Double](tokens.length)
-		var y = 0.0
-		val vsize = if (omitLast) tokens.length - 1 else tokens.length
+		val tokens = str split ","		
+		require(tokens.length == conv.length)
 		
-		for(i <- 0 until vsize) {
-		  x(i) = if(conv(i).isEmpty) tokens(i).toDouble else conv(i)(tokens(i))
-		}
+		val point = (conv, tokens).zipped.map((c, elem) => c.getOrElse(elem, elem.toDouble))
+		if(omitLast) point.drop(point.length)
 		
-		Vectors.dense(x)
+		Vectors.dense(point)
 	}
 }
