@@ -58,117 +58,38 @@ class EntropyMinimizationDiscretizer private (
       	
       // get the first range before reaching a boundary point in each partition
       // (including their class frequencies)
-      val sc = data.context      
-      val firstByPart = sortedValues.mapPartitionsWithIndex({(index, it) =>
-        	var found = false
-        	var (lastX, lastFreqs) = it.next()
-        	var accumFreqs = lastFreqs.clone
-        	var reference: (Option[Double], Array[Long]) = (None, accumFreqs)
-        	
-        	while(it.hasNext && !found) {
-        		val (x, freqs) = it.next()
-        		if(isBoundary(freqs, lastFreqs)) {
-        			reference = (Some(lastX), accumFreqs.clone)
-        			found = true
-        		}
-    			lastX = x
-				lastFreqs = freqs
-				accumFreqs = (accumFreqs, freqs).zipped.map(_ + _)  		
-        	}
-        	
-    		val result = reference._1 match {
-    		  	case None if index == (numPartitions - 1) => 
-    		  	  	Seq((Some(lastX), accumFreqs)).toIterator /* last point in the dataset */
-    		  	case Some(point) => Seq(reference).toIterator /* do nothing */
-    		}
-    		result
-      	})
+      val sc = data.context
       	
-      	/* Find reference points by partition (
-      	 * first point that mark a boundary point, last point dataset, etc.)
-      	 */
-        val firstReferenceByPart = sortedValues.mapPartitionsWithIndex({(index, it) =>
-        	
-        	def findReferencePoints(
-        	    it: Iterator[(Double, Array[Long])], 
-        	    lastX: Double,
-        	    lastFreqs: Array[Long],
-        	    accumFreqs: Array[Long]): (Option[Double], Array[Long]) = {
-        		
-        		if(it.hasNext) {
-        			val (x, freqs) = it.next()
-	        		if(isBoundary(freqs, lastFreqs)) {
-	        			(Some(lastX), accumFreqs)
-	        		} else {
-	        			findReferencePoints(it, x, freqs, (accumFreqs, freqs).zipped.map(_ + _))
-	        		}        			
-        		} else {
-        			// there is no boundary points in this partition, we return the total accum
-        			// In case it was the last partition, we return the last point in the data set
-        			if(index < (numPartitions - 1)) (None, accumFreqs) else (Some(lastX), accumFreqs)
-        		}
-        		
-        	}
-        	
-        	val (firstX, firstFreqs) = it.next() // first element
-        	val reference = findReferencePoints(it, firstX, firstFreqs, firstFreqs.clone)
-        	Seq((firstX, firstFreqs, reference._1, reference._2)).toIterator
-      	}).collect
-      	
-      	val partitionsHeads0 = sc.runJob(sortedValues, { case it =>
+	  	val partitionsHeads = sc.runJob(sortedValues, { case it =>
 	      def getPartitionHead(
-        	    it: Iterator[(Double, Array[Long])],
-        	    head: Seq[(Double, Array[Long])]): Seq[(Double, Array[Long])] = {
-        		
-        		if (it.hasNext) {
-        			val (x, freqs) = it.next()
-        			val (_, lastFreqs) = head.last
+	    	    it: Iterator[(Double, Array[Long])],
+	    	    lastX: Double,
+	    	    lastFreqs: Array[Long],
+	    	    accumFreqs: Array[Long]): Seq[(Double, Array[Long])] = {
+	    		
+	    		if (it.hasNext) {
+	    			val (x, freqs) = it.next()
 	        		if(isBoundary(freqs, lastFreqs)) {
-	        			(x, freqs) +: head
+	        			if(accumFreqs.filter(_ == 0).size < nLabels) Seq((x, freqs)) // Non-boundary point have been found
+	        			else Seq((lastX, accumFreqs), (x, freqs))
 	        		} else {
-	        			if (head.size == 1) {	        			  
-	        				getPartitionHead(it, (x, freqs) +: head)
-	        			}else{
-	        				head(0)._1 = x
-	        			}
+	        			getPartitionHead(it, x, freqs, (accumFreqs, freqs).zipped.map(_ + _))
 	        		}
-        		}
-        		
-        		head        		
-        	}
-        	
-        	val (firstX, firstFreqs) = it.next() // first element
-        	val head = getPartitionHead(it, Seq((firstX, firstFreqs)))
-        	head.reverse.toIterator
+	    		}        		
+	    		Seq.empty[(Double, Array[Long])]        		
+	    	}
+	    	
+	    	val (firstX, firstFreqs) = it.next() // first element
+	    	val head = getPartitionHead(it, firstX, firstFreqs, Array.fill(nLabels)(0L))
+	    	
+	    	(Seq((firstX, firstFreqs)) ++ head).toIterator
+	    	
 	    }: (Iterator[(Double, Array[Long])]) => Iterator[(Double, Array[Long])])
-      	
-        val partitionsHeads = sortedValues.mapPartitionsWithIndex({(index, it) =>
-        	
-        	def getPartitionHead(
-        	    it: Iterator[(Double, Array[Long])],
-        	    head: Seq[(Double, Array[Long])]): Seq[(Double, Array[Long])] = {
-        		
-        		if (it.hasNext) {
-        			val (x, freqs) = it.next()
-        			val (_, lastFreqs) = head.last
-	        		if(isBoundary(freqs, lastFreqs)) {
-	        			(x, freqs) +: head
-	        		} else {
-	        			getPartitionHead(it, (x, freqs) +: head)
-	        		}
-        		}
-        		
-        		head        		
-        	}
-        	
-        	val (firstX, firstFreqs) = it.next() // first element
-        	val head = getPartitionHead(it, Seq((firstX, firstFreqs)))
-        	head.reverse.toIterator
-      	})
+
       //println("First Elements: " + i + "\n" + firstsByPart.mkString("\n"))
       	
       // Get the boundary points with its frequencies
-      val initialCandidates = initialThresholds(sortedValues, firstReferenceByPart, nLabels)
+      val initialCandidates = initialThresholds(sortedValues, partitionsHeads, nLabels)
       val asd = initialCandidates.collect.sortBy(_._1).map{case (k, v) => k.toString + "," + v.mkString(",")}
       		.mkString("\n")
       println("Initial candidates:\n" + asd)
@@ -199,140 +120,78 @@ class EntropyMinimizationDiscretizer private (
    */
   private def initialThresholds(
       points: RDD[(Double, Array[Long])], 
-      head: RDD[(Double, Array[Long])],
+      partitionsHeads:  Array[Iterator[(Double, Array[Long])]],
       nLabels: Int) = {
 	  
+	val sc = points.context
     val numPartitions = points.partitions.length
-    		
-    points.zipPartitions(head)({(itpoints, ithead) =>
-      itpoints.
-    })
-    points.mapPartitionsWithIndex({ (index, it) =>
-      
-      val asd = head.partitions(index)
-      // Is there any boundary point in this partition?
-      bcReferencesByPart.value(index)._3 match {
-      	case None => Seq.empty.toIterator
-      	case _ => 
-      	  var result = Seq.empty[(Double, Array[Long])]
-	      var (lastX, lastFreqs) = it.next()
-	      var accumFreqs = lastFreqs.clone
-	      
-	      for ((x, freqs) <- it) {
-	          if(isBoundary(freqs, lastFreqs)) {
-	        	  // new boundary point
-	        	  result = ((x + lastX) / 2, accumFreqs.clone) +: result
-	        	  accumFreqs = Array.fill(nLabels)(0L)
-	          }
-	          
-	          lastX = x
-			  lastFreqs = freqs
-			  accumFreqs = (accumFreqs, freqs).zipped.map(_ + _) 
-	      }
-	      
-	           
-	      var i = index + 1
-	      var found = false
-	      if(i < (numPartitions - 1)) {
-	    	  // We try to find the first reference point 
-	    	  // in the following partitions
-		      while (i < (numPartitions - 1) && !found) {
-		    	  // (reference point, left frequencies
-		    	  val (leftX, firstFreqs, rigthX, rangeFreqs) = bcReferencesByPart.value(i) 
-		    	  if (isBoundary(firstFreqs, lastFreqs)) {
-		    		  result = ((leftX + lastX) / 2, accumFreqs.clone) +: result
-		        	  found = true
-		    	  } else {
-		    		  // Sum accum freqs to the left
-			    	  accumFreqs = (accumFreqs, rangeFreqs).zipped.map(_ + _)
-			    	  rigthX match {
-		    	  		case Some(point) if isBoundary(rangeFreqs, lastFreqs) => 
-		    	  		  // last boundary point
-			        	  result = ((point + lastX) / 2, accumFreqs.clone) +: result
-			        	  found = true
-		    	  		case Some(point) =>
-			        	  lastX = point
-		    	  		case None => /* only sum the accum freqs */
-			    	  }		    	    
-		    	  }		    	  		    	  
-				  lastFreqs = rangeFreqs
-		    	  i += 1
-		      }	    	  
-	      }
-	      
-	      result.reverse.toIterator
-      }      
-    })
-  }
-
-  /**
-   * Calculates the initial candidate thresholds for a feature
-   * @param data RDD (value, frequencies) of DISTINCT values for one particular feature.
-   * @param bcFistByPart first boundary elements by partitions with their frequency accumulators
-   * @return RDD of (boundary point, class frequencies between last and current candidate) pairs.
-   */
-  private def initialThresholds(
-      points: RDD[(Double, Array[Long])], 
-      referencesByPart: Array[(Double, Array[Long], Option[Double], Array[Long])],
-      nLabels: Int) = {
-	  
-    val bcReferencesByPart = points.context.broadcast(referencesByPart)
-    val numPartitions = points.partitions.length
+    val bcPartitionsHeads = sc.broadcast(partitionsHeads)   		
 
     points.mapPartitionsWithIndex({ (index, it) =>
       
-      // Is there any boundary point in this partition?
-      bcReferencesByPart.value(index)._3 match {
-      	case None => Seq.empty.toIterator
-      	case _ => 
-      	  var result = Seq.empty[(Double, Array[Long])]
-	      var (lastX, lastFreqs) = it.next()
-	      var accumFreqs = lastFreqs.clone
-	      
-	      for ((x, freqs) <- it) {
-	          if(isBoundary(freqs, lastFreqs)) {
-	        	  // new boundary point
-	        	  result = ((x + lastX) / 2, accumFreqs.clone) +: result
-	        	  accumFreqs = Array.fill(nLabels)(0L)
-	          }
-	          
-	          lastX = x
-			  lastFreqs = freqs
-			  accumFreqs = (accumFreqs, freqs).zipped.map(_ + _) 
-	      }
-	      
-	           
-	      var i = index + 1
-	      var found = false
-	      if(i < (numPartitions - 1)) {
-	    	  // We try to find the first reference point 
-	    	  // in the following partitions
-		      while (i < (numPartitions - 1) && !found) {
-		    	  // (reference point, left frequencies
-		    	  val (leftX, firstFreqs, rigthX, rangeFreqs) = bcReferencesByPart.value(i) 
-		    	  if (isBoundary(firstFreqs, lastFreqs)) {
-		    		  result = ((leftX + lastX) / 2, accumFreqs.clone) +: result
-		        	  found = true
-		    	  } else {
-		    		  // Sum accum freqs to the left
-			    	  accumFreqs = (accumFreqs, rangeFreqs).zipped.map(_ + _)
-			    	  rigthX match {
-		    	  		case Some(point) if isBoundary(rangeFreqs, lastFreqs) => 
-		    	  		  // last boundary point
-			        	  result = ((point + lastX) / 2, accumFreqs.clone) +: result
+  	  	// Calc first element to start the iteration
+  	  	val headIT = bcPartitionsHeads.value(index + 1).toSeq
+
+	  	var (lastX, lastFreqs) = if(index > 0) headIT.seq.last else headIT.seq(0)
+	  	var result = Seq.empty[(Double, Array[Long])]
+		var accumFreqs = lastFreqs.clone
+		      
+		// We forward the main iterator until the end of its associated head
+  	  	def findFirstNonRepetedElement(
+  	      iter: Iterator[(Double, Array[Long])]): 
+  	    	  Iterator[(Double, Array[Long])] = {
+  	    
+      	    if(iter.hasNext) {
+      	    	val (x, _) = iter.next
+      	    	if(x == lastX) iter
+      	    	else findFirstNonRepetedElement(iter)
+      	    }
+      	    Iterator.empty
+	  	}		  
+	  	
+  		val forwardIT = if(index > 0) {
+  		  findFirstNonRepetedElement(it)
+  		} else {
+  		  it.next
+  		  it
+  		}
+
+  	  	if(!forwardIT.isEmpty) {
+		      
+		      for ((x, freqs) <- it) {
+		          if(isBoundary(freqs, lastFreqs)) {
+		        	  // new boundary point
+		        	  result = ((x + lastX) / 2, accumFreqs.clone) +: result
+		        	  accumFreqs = Array.fill(nLabels)(0L)
+		          }
+		          
+		          lastX = x
+				  lastFreqs = freqs
+				  accumFreqs = (accumFreqs, freqs).zipped.map(_ + _) 
+		      }    
+		   
+	    	  // We use the head of the following partitions until 
+		      // we reach a boundary point
+		      var found = false
+		      while ((index + 1) < numPartitions && !found) {
+		    	  
+		    	  for ((x, freqs) <- bcPartitionsHeads.value(index + 1)) {
+			          if(isBoundary(freqs, lastFreqs)) {
+			        	  // boundary point
+			        	  result = ((x + lastX) / 2, accumFreqs.clone) +: result
+			        	  accumFreqs = Array.fill(nLabels)(0L)
 			        	  found = true
-		    	  		case Some(point) =>
-			        	  lastX = point
-		    	  		case None => /* only sum the accum freqs */
-			    	  }		    	    
-		    	  }		    	  		    	  
-				  lastFreqs = rangeFreqs
-		    	  i += 1
-		      }	    	  
-	      }
-	      
-	      result.reverse.toIterator
-      }      
+			          }
+			          
+			          lastX = x
+					  lastFreqs = freqs
+					  accumFreqs = (accumFreqs, freqs).zipped.map(_ + _) 
+		    	  }	
+		      }			      
+	  	  } 
+  	  	
+  	  	result.reverse.toIterator
+      	      
     })
   }
   
