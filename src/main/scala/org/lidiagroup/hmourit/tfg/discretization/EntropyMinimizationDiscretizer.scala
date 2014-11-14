@@ -43,11 +43,11 @@ class EntropyMinimizationDiscretizer private (
     var thresholds = Map.empty[Int, Seq[Double]]
     
     for (i <- continuousFeaturesIndexes) {
-      val featureValues = data.map({case LabeledPoint(label, values) => 
-       	  val frequencies = Array.fill[Long](nLabels)(0L)
-       	  frequencies(labels2Int.value(label)) = 1L
-       	  (values.toArray(i), frequencies)       	  
-      })
+    	val featureValues = data.map({case LabeledPoint(label, values) => 
+   	  	val frequencies = Array.fill[Long](nLabels)(0L)
+   	  	frequencies(labels2Int.value(label)) = 1L
+   	  	(values.toArray(i), frequencies)       	  
+	})
       // Group class values by feature
       val featureValuesFreqs = featureValues
       		.reduceByKey((_,_).zipped.map(_ + _))
@@ -60,42 +60,43 @@ class EntropyMinimizationDiscretizer private (
       // (including their class frequencies)
       val sc = data.context
       	
-	  	val partitionsHeads = sc.runJob(sortedValues, { case it =>
-	      def getPartitionHead(
-	    	    it: Iterator[(Double, Array[Long])],
-	    	    lastX: Double,
-	    	    lastFreqs: Array[Long],
-	    	    accumFreqs: Array[Long]): Seq[(Double, Array[Long])] = {
-	    		
-	    		if (it.hasNext) {
-	    			val (x, freqs) = it.next()
-	        		if(isBoundary(freqs, lastFreqs)) {
-	        			if(accumFreqs.filter(_ == 0).size < nLabels) Seq((x, freqs)) // Non-boundary point have been found
-	        			else Seq((lastX, accumFreqs), (x, freqs))
-	        		} else {
-	        			getPartitionHead(it, x, freqs, (accumFreqs, freqs).zipped.map(_ + _))
-	        		}
-	    		}        		
-	    		Seq.empty[(Double, Array[Long])]        		
-	    	}
-	    	
-	    	val (firstX, firstFreqs) = it.next() // first element
-	    	val head = getPartitionHead(it, firstX, firstFreqs, Array.fill(nLabels)(0L))
-	    	
-	    	(Seq((firstX, firstFreqs)) ++ head).toIterator
-	    	
-	    }: (Iterator[(Double, Array[Long])]) => Iterator[(Double, Array[Long])])
+		val partitionsHeads = sc.runJob(sortedValues, { case it =>
+		  def getPartitionHead(
+			    it: Iterator[(Double, Array[Long])],
+			    lastX: Double,
+			    lastFreqs: Array[Long],
+			    accumFreqs: Array[Long]): Seq[(Double, Array[Long])] = {
+				
+				if (it.hasNext) {
+					val (x, freqs) = it.next()
+		    		if(isBoundary(freqs, lastFreqs)) {
+		    			if(accumFreqs.filter(_ == 0).size < nLabels) Seq((x, freqs)) 
+		    			else Seq((lastX, accumFreqs), (x, freqs))
+		    		} else {
+		    			getPartitionHead(it, x, freqs, (accumFreqs, freqs).zipped.map(_ + _))
+		    		}
+				} else {
+					// Non-boundary point have been found
+					if(accumFreqs.filter(_ == 0).size < nLabels) Seq((lastX, accumFreqs))
+					else Seq.empty[(Double, Array[Long])]
+				}			        		
+			}
+			
+			val (firstX, firstFreqs) = it.next() // first element
+			val head = getPartitionHead(it, firstX, firstFreqs, Array.fill(nLabels)(0L))
+			
+			(Seq((firstX, firstFreqs)) ++ head).toIterator
+			
+		}: (Iterator[(Double, Array[Long])]) => Iterator[(Double, Array[Long])])
 
       //println("First Elements: " + i + "\n" + firstsByPart.mkString("\n"))
-      	
+
+      val asd = partitionsHeads.reduce(_ ++ _).map{case (k, v) => k.toString + "," + v.mkString(",")}
+      		.mkString("\n")
+      println("Partition Heads:\n" + asd)
       // Get the boundary points with its frequencies
       val initialCandidates = initialThresholds(sortedValues, partitionsHeads, nLabels)
-      val asd = initialCandidates.collect.sortBy(_._1).map{case (k, v) => k.toString + "," + v.mkString(",")}
-      		.mkString("\n")
-      println("Initial candidates:\n" + asd)
-      
-      //println("Attribute: " + i + "\n" + initialCandidates.collect.sortBy(_._1).map(_._2.mkString(",")).mkString("\n"))
-      
+
       val nCandsApprox = initialCandidates
           .countApprox(2000)
           .getFinalValue.high
@@ -115,7 +116,7 @@ class EntropyMinimizationDiscretizer private (
   /**
    * Calculates the initial candidate thresholds for a feature
    * @param data RDD (value, frequencies) of DISTINCT values for one particular feature.
-   * @param bcFistByPart first boundary elements by partitions with their frequency accumulators
+   * @param partitionsHeads 
    * @return RDD of (boundary point, class frequencies between last and current candidate) pairs.
    */
   private def initialThresholds(
@@ -129,14 +130,14 @@ class EntropyMinimizationDiscretizer private (
 
     points.mapPartitionsWithIndex({ (index, it) =>
       
-  	  	// Calc first element to start the iteration
+  	  	// Calculate first element to start the iteration
   	  	val headIT = bcPartitionsHeads.value(index + 1).toSeq
 
 	  	var (lastX, lastFreqs) = if(index > 0) headIT.seq.last else headIT.seq(0)
 	  	var result = Seq.empty[(Double, Array[Long])]
 		var accumFreqs = lastFreqs.clone
 		      
-		// We forward the main iterator until the end of its associated head
+		// We forward main iterator until the end of its associated head
   	  	def findFirstNonRepetedElement(
   	      iter: Iterator[(Double, Array[Long])]): 
   	    	  Iterator[(Double, Array[Long])] = {
@@ -157,7 +158,7 @@ class EntropyMinimizationDiscretizer private (
   		}
 
   	  	if(!forwardIT.isEmpty) {
-		      
+		      // Afterwards, we follow the same process over the rest of the partition
 		      for ((x, freqs) <- it) {
 		          if(isBoundary(freqs, lastFreqs)) {
 		        	  // new boundary point
@@ -170,25 +171,25 @@ class EntropyMinimizationDiscretizer private (
 				  accumFreqs = (accumFreqs, freqs).zipped.map(_ + _) 
 		      }    
 		   
-	    	  // We use the head of the following partitions until 
-		      // we reach a boundary point
+	    	  // We continue with the head of the following partitions until 
+		      // reaching the last boundary point
 		      var found = false
 		      while ((index + 1) < numPartitions && !found) {
-		    	  
-		    	  for ((x, freqs) <- bcPartitionsHeads.value(index + 1)) {
+		    	  val extendedIT = bcPartitionsHeads.value(index + 1)
+		    	  while (extendedIT.hasNext && !found) {
+		    		  val (x, freqs) = extendedIT.next
 			          if(isBoundary(freqs, lastFreqs)) {
-			        	  // boundary point
+			        	  // last boundary point (we only need one more)
 			        	  result = ((x + lastX) / 2, accumFreqs.clone) +: result
-			        	  accumFreqs = Array.fill(nLabels)(0L)
 			        	  found = true
+			          } else {			          
+				          lastX = x
+						  lastFreqs = freqs
+						  accumFreqs = (accumFreqs, freqs).zipped.map(_ + _) 
 			          }
-			          
-			          lastX = x
-					  lastFreqs = freqs
-					  accumFreqs = (accumFreqs, freqs).zipped.map(_ + _) 
 		    	  }	
 		      }			      
-	  	  } 
+  	  	} 
   	  	
   	  	result.reverse.toIterator
       	      
