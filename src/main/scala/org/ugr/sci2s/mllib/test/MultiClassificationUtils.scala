@@ -5,8 +5,6 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.SparkContext._
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.mllib.util.ConfusionMatrix
-import java.io.PrintWriter
-import java.io.File
 import org.apache.spark.annotation.Experimental
 import org.apache.spark.SparkContext
 import scala.util.Random
@@ -293,8 +291,8 @@ object MultiClassificationUtils {
 					
 			val typeConversion = KeelParser.parseHeaderFile(sc, headerFile)	
 			val reverseConv = typeConversion.last.map(_.swap) // for last class
-			
 			val binary = typeConversion.last.size < 3
+			
 			//if(!binary) throw new IllegalArgumentException("Data class not binary...")
 			val bcTypeConv = sc.broadcast(typeConversion).value
 			val dataFiles = inputData match {
@@ -319,11 +317,12 @@ object MultiClassificationUtils {
 				val trainData = sc.textFile(trainFile).
 						//sample(false, samplingRate, seed.nextLong).
 						map(line => (KeelParser.parseLabeledPoint(bcTypeConv, line)))
+								
 				val testData = sc.textFile(testFile).
 						//sample(false, samplingRate, seed.nextLong).
 						map(line => (KeelParser.parseLabeledPoint(bcTypeConv, line)))
-				trainData.persist(StorageLevel.MEMORY_ONLY_SER) 
-				testData.persist(StorageLevel.MEMORY_ONLY_SER)
+				trainData.persist(StorageLevel.MEMORY_AND_DISK_SER) 
+				testData.persist(StorageLevel.MEMORY_AND_DISK_SER)
 				
 				// Discretization
 				var trData = trainData; var tstData = testData
@@ -406,14 +405,17 @@ object MultiClassificationUtils {
 					timeResults("FullTime").sum / timeResults("FullTime").size + " seconds.\n"
 					
 			// Confusion Matrix		
-			val aggConfMatrix = ConfusionMatrix.apply(predictions.map(_._2).reduceLeft(_ union _), 
+			val aggTstConfMatrix = ConfusionMatrix.apply(predictions.map(_._2).reduceLeft(_ union _), 
 			    typeConv.last)	
-		    output += aggConfMatrix.fValue.foldLeft("\t")((str, t) => str + "\t" + t._1) + "\n"
-		    output += aggConfMatrix.fValue.foldLeft("F-Measure:")((str, t) => str + "\t" + t._2) + "\n"
-		    output += aggConfMatrix.precision.foldLeft("Precision:")((str, t) => str + "\t" + t._2) + "\n"
-		    output += aggConfMatrix.recall.foldLeft("Recall:")((str, t) => str + "\t" + t._2) + "\n"
-		    output += aggConfMatrix.specificity.foldLeft("Specificity:")((str, t) => str + "\t" + t._2) + "\n"
-		    output += aggConfMatrix.toString
+		    output += aggTstConfMatrix.fValue.foldLeft("\t")((str, t) => str + "\t" + t._1) + "\n"
+		    output += aggTstConfMatrix.fValue.foldLeft("F-Measure:")((str, t) => str + "\t" + t._2) + "\n"
+		    output += aggTstConfMatrix.precision.foldLeft("Precision:")((str, t) => str + "\t" + t._2) + "\n"
+		    output += aggTstConfMatrix.recall.foldLeft("Recall:")((str, t) => str + "\t" + t._2) + "\n"
+		    output += aggTstConfMatrix.specificity.foldLeft("Specificity:")((str, t) => str + "\t" + t._2) + "\n"
+		    output += "Test Confusion Matrix\n" + aggTstConfMatrix.toString
+		    val aggTraConfMatrix = ConfusionMatrix.apply(predictions.map(_._1).reduceLeft(_ union _), 
+			    typeConv.last)
+		    output += "Train Confusion Matrix\n" + aggTraConfMatrix.toString
 			println(output)
 			
 			val sc = predictions(0)._1.context
