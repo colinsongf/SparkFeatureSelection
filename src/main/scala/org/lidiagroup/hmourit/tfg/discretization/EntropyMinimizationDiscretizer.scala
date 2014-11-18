@@ -82,11 +82,13 @@ class EntropyMinimizationDiscretizer private (
 				}			        		
 			}
 			
-			val (firstX, firstFreqs) = it.next() // first element
-			val head = getPartitionHead(it, firstX, firstFreqs, Array.fill(nLabels)(0L))
-			
-			(Seq((firstX, firstFreqs)) ++ head)
-			
+		  	if (it.hasNext) {	
+		  		val (firstX, firstFreqs) = it.next() // first element
+				val head = getPartitionHead(it, firstX, firstFreqs, Array.fill(nLabels)(0L))
+				(Seq((firstX, firstFreqs)) ++ head)
+		  	} else {
+		  		Seq.empty[(Double, Array[Long])]
+		  	}			
 		}: (Iterator[(Double, Array[Long])]) => Seq[(Double, Array[Long])])
 	    
   	  	// Get the boundary points with its frequencies
@@ -122,72 +124,79 @@ class EntropyMinimizationDiscretizer private (
     val bcPartitionsHeads = sc.broadcast(partitionsHeads)   		
 
     points.mapPartitionsWithIndex({ (index, it) =>
-      
-  	  	// Point to the first element in order to start the process and
+      	
+  		// Point to the first element in order to start the process and
       	// avoid overlapping between consecutive partitions
-  	  	val headIT = bcPartitionsHeads.value(index)
-
-	  	var (lastX, lastFreqs) = if(index > 0) headIT.last else headIT(0)
-	  	var result = Seq.empty[(Double, Array[Long])]
-		var accumFreqs = lastFreqs.clone
-		      
-		// We forward main iterator until the end of its associated head
-  	  	def findFirstNonRepetedElement(
-  	      iter: Iterator[(Double, Array[Long])]): 
-  	    	  Iterator[(Double, Array[Long])] = {
-  	    
-      	    if(iter.hasNext) {
-      	    	val (x, _) = iter.next()
-      	    	if(x == lastX) iter
-      	    	else findFirstNonRepetedElement(iter)
-      	    } else {
-      	    	Iterator.empty
-      	    }      	    
-	  	}		  
-	  	
-  		val forwardIT = if(index > 0) {
-  		  findFirstNonRepetedElement(it)
-  		} else {
-  		  it.next()
-  		  it
-  		}
-  		
-  	  	if(forwardIT.hasNext) {
-		      // Afterwards, we follow the same process over the rest of the partition
-		      for ((x, freqs) <- forwardIT) {		        
-		          if(isBoundary(freqs, lastFreqs)) {
-		        	  // new boundary point
-		        	  result = ((x + lastX) / 2, accumFreqs.clone) +: result
-		        	  accumFreqs = Array.fill(nLabels)(0L)
-		          }
-		          
-		          lastX = x
-				  lastFreqs = freqs
-				  accumFreqs = (accumFreqs, freqs).zipped.map(_ + _)
-		      }    
-		   
-	    	  // We continue with the head of the following partitions until 
-		      // reaching the last boundary point
-		      var boundaryPartition = false
-		      while ((index + 1) < numPartitions && !boundaryPartition) {
-		    	  val extendedIT = bcPartitionsHeads.value(index + 1).toIterator
-		    	  for ((x, freqs) <- extendedIT) {
+      	val head = bcPartitionsHeads.value(index)
+      
+      	if(it.hasNext && !head.isEmpty) {
+	
+		  	var (lastX, lastFreqs) = if(index > 0) head.last else head(0)
+		  	var result = Seq.empty[(Double, Array[Long])]
+			var accumFreqs = lastFreqs.clone
+			      
+			// We forward main iterator until the end of its associated head
+	  	  	def findFirstNonRepetedElement(
+	  	      iter: Iterator[(Double, Array[Long])]): 
+	  	    	  Iterator[(Double, Array[Long])] = {
+	  	    
+	      	    if(iter.hasNext) {
+	      	    	val (x, _) = iter.next()
+	      	    	if(x == lastX) iter
+	      	    	else findFirstNonRepetedElement(iter)
+	      	    } else {
+	      	    	Iterator.empty
+	      	    }      	    
+		  	}		  
+		  	
+	  		val forwardIT = if(index > 0) {
+	  		  findFirstNonRepetedElement(it)
+	  		} else {
+	  		  if(!it.isEmpty) it.next()
+	  		  it
+	  		}
+	  		
+	  	  	if(forwardIT.hasNext) {
+			      // Afterwards, we follow the same process over the rest of the partition
+			      for ((x, freqs) <- forwardIT) {		        
 			          if(isBoundary(freqs, lastFreqs)) {
-			        	  // last boundary point (we only need one more)
+			        	  // new boundary point
 			        	  result = ((x + lastX) / 2, accumFreqs.clone) +: result
 			        	  accumFreqs = Array.fill(nLabels)(0L)
-			        	  // false in case all points in the partitions has the same class frequency
-			        	  boundaryPartition = true 
 			          }
 			          
 			          lastX = x
 					  lastFreqs = freqs
 					  accumFreqs = (accumFreqs, freqs).zipped.map(_ + _)
-		    	  }	
-		      }
-  	  	}
-  	  	
-  	  	result.reverse.toIterator
+			      }    
+			   
+		    	  // We continue with the head of the following partitions until 
+			      // reaching the last boundary point
+			      var boundaryPartition = false
+			      while ((index + 1) < numPartitions && !boundaryPartition) {
+			    	  val extendedIT = bcPartitionsHeads.value(index + 1).toIterator
+			    	  for ((x, freqs) <- extendedIT) {
+				          if(isBoundary(freqs, lastFreqs)) {
+				        	  // last boundary point (we only need one more)
+				        	  result = ((x + lastX) / 2, accumFreqs.clone) +: result
+				        	  accumFreqs = Array.fill(nLabels)(0L)
+				        	  // false in case all points in the partitions has the same class frequency
+				        	  boundaryPartition = true 
+				          }
+				          
+				          lastX = x
+						  lastFreqs = freqs
+						  accumFreqs = (accumFreqs, freqs).zipped.map(_ + _)
+			    	  }	
+			      }
+	  	  	}
+	  	  	
+	  	  	result.reverse.toIterator
+	  	  	
+      	} else {
+      		Iterator.empty
+      	}
+	  	  	
       	      
     })
   }
