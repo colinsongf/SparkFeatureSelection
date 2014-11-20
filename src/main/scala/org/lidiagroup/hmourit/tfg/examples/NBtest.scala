@@ -60,7 +60,7 @@ object NBtest {
 		
 		def featureSelect = (data: RDD[LabeledPoint]) => {
 			// Feature Selection
-			val criterion = new InfoThCriterionFactory("jmi")
+			val criterion = new InfoThCriterionFactory("mrmr")
 			val model = InfoThFeatureSelection.train(criterion, 
 		      data,
 		      19) // number of features to select (value from the best hit in ECBDL14)

@@ -51,11 +51,7 @@ class EntropyMinimizationDiscretizer private (
     	
     	// Group class values by feature
     	val distinctValues = featureValues.reduceByKey((_,_).zipped.map(_ + _))
-      
-    	/*val featureValues = data.map({
-    		case LabeledPoint(label, values) => (values.toArray(i), labels2Int.value(label))
-    	})*/
-		
+    	
     	// Sort these values to perform the boundary points evaluation
     	val sortedValues = distinctValues.sortByKey() 	
 
@@ -111,55 +107,6 @@ class EntropyMinimizationDiscretizer private (
     new EntropyMinimizationDiscretizerModel(thresholds)
 
   }
-  
-   /**
-	* Calculates the initial candidate thresholds for a feature (data has to be sorted with
-	* RangePartitioner as its partitioning method)
-	* @param data RDD of (value, label) pairs.
-	* @param nLabels Number of distinct labels in the dataset.
-	* @return RDD of (candidate, class frequencies between last and current candidate) pairs.
-	* 
-	*/
-  private def countFrequencies(data: RDD[(Double, Int)], 
-		  nLabels: Int) = {
-	  
-	  data.mapPartitions({ it =>
-	    
-		  def countFreq(
-		    it: Iterator[(Double, Int)],
-		    lastX: Double,
-		    accumFreqs: Array[Long]): Seq[(Double, Array[Long])] = {
-			
-			if (it.hasNext) {
-				val (x, y) = it.next()
-	    		if (x == lastX) {
-				  // same point than previous
-				  accumFreqs(y) += 1L
-				  countFreq(it, x, accumFreqs)
-	    		} else {
-				  // new point
-	    		  val newAccum = Array.fill[Long](nLabels)(0L)
-	    		  newAccum(y) += 1L
-				  (lastX, accumFreqs) +: countFreq(it, x, newAccum)
-	    		}
-			} else {
-				Seq((lastX, accumFreqs))
-			}			        		
-		  }
-		  
-		  	if (it.hasNext) {	
-		  		val (firstX, firstY) = it.next() // first element
-		  		val accumFreqs = Array.fill[Long](nLabels)(0L)
-		  		accumFreqs(firstY) += 1L
-				val frequencies = countFreq(it, firstX, accumFreqs)
-				frequencies.reverse.toIterator
-		  	} else {
-		  		Iterator.empty
-		  	}	
-	  })
-  
-  }
-  
   
   /**
    * Calculates the initial candidate thresholds for a feature

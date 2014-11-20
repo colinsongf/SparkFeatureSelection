@@ -77,10 +77,10 @@ object SVMtest {
 		
 		def featureSelect = (data: RDD[LabeledPoint]) => {
 			// Feature Selection
-			val criterion = new InfoThCriterionFactory("jmi")
+			val criterion = new InfoThCriterionFactory("mrmr")
 			val model = InfoThFeatureSelection.train(criterion, 
 		      data,
-		      100) // number of features to select
+		      19) // number of features to select
 		    val reducedData = model.select(data)
 		    (model, reducedData)
 		}
@@ -92,7 +92,7 @@ object SVMtest {
 				s"regParam: $regParam\n" +
 				s"miniBatchFraction: $miniBatchFraction\n\n"
 		
-		MCU.executeExperiment(sc, None, None,  Some(classify),
+		MCU.executeExperiment(sc, Some(discretization), Some(featureSelect),  Some(classify),
 		    headerFile, (trainFile, testFile), outputDir, algoInfo)
 		sc.stop()
 	}
