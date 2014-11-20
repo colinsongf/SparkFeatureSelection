@@ -28,6 +28,7 @@ import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.rdd.EmptyRDD
 import org.apache.spark.mllib.util.ConfusionMatrixWithDict
 import org.apache.spark.mllib.util.ConfusionMatrixWithDict
+import org.apache.spark.mllib.regression.LabeledPoint
 
 object MultiClassificationUtils {
   
@@ -130,7 +131,8 @@ object MultiClassificationUtils {
 				train: RDD[LabeledPoint], 
 				test: RDD[LabeledPoint], 
 				outputDir: String,
-				iteration: Int) = {
+				iteration: Int,
+				saveData: Boolean = false) = {
 		  
 			val sc = train.context
 		  	/** Check if the results for this fold are already written in disk
@@ -152,8 +154,24 @@ object MultiClassificationUtils {
 					val initStartTime = System.nanoTime()
 					val (discAlgorithm, discData) = discretize(train)
 					val discTime = (System.nanoTime() - initStartTime) / 1e9
-					val thresholds = discAlgorithm.getThresholds
-						.toArray.sortBy(_._1)
+					val thresholds = discAlgorithm.getThresholds.toArray.sortBy(_._1)
+					val discTestData = discAlgorithm.discretize(test)
+					
+					// Save discretized data 
+					if(saveData) {
+ 						val strTrainDisc = discData.map({case LabeledPoint(label, features) => 
+							features.toArray.map(_.toInt).mkString(",") + "," + label.toInt
+						})
+						
+						strTrainDisc.saveAsTextFile(outputDir + "disc_train_" + iteration)
+						
+						val strTstDisc = discTestData.map({case LabeledPoint(label, features) => 
+							features.toArray.map(_.toInt).mkString(",") + "," + label.toInt
+						})
+						
+						strTstDisc.saveAsTextFile(outputDir + "disc_tst_" + iteration)						
+					}
+					
 					// Save the obtained thresholds in a HDFS file (as a sequence)
 					val output = thresholds.foldLeft("")((str, elem) => str + 
 								elem._1 + "\t" + elem._2.mkString("\t") + "\n")
@@ -162,7 +180,7 @@ object MultiClassificationUtils {
 					val strTime = sc.parallelize(discTime.toString, 1)
 					strTime.saveAsTextFile(outputDir + "disc_time_" + iteration)
 					
-					(discData, discAlgorithm.discretize(test), discTime)
+					(discData, discTestData, discTime)
 			}		
 		}
 		
@@ -243,10 +261,10 @@ object MultiClassificationUtils {
 					
 					// Print training fold results
 					val reverseConv = typeConv.last.map(_.swap) // for last class
-					val outputTrain = traValuesAndPreds.map(t => reverseConv.getOrElse(t._1, "") + " " +
+					val outputTrain = traValuesAndPreds.map(t => reverseConv.getOrElse(t._1, "") + "\t" +
 						    reverseConv.getOrElse(t._2, ""))   
 					outputTrain.saveAsTextFile(outputDir + "result_" + iteration + ".tra")
-					val outputTest = tstValuesAndPreds.map(t => reverseConv.getOrElse(t._1, "") + " " +
+					val outputTest = tstValuesAndPreds.map(t => reverseConv.getOrElse(t._1, "") + "\t" +
 						    reverseConv.getOrElse(t._2, ""))    
 					outputTest.saveAsTextFile(outputDir + "result_" + iteration + ".tst")		
 					val strTime = sc.parallelize(classificationTime.toString, 1)
@@ -330,7 +348,7 @@ object MultiClassificationUtils {
 				discretize match { 
 				  case Some(disc) => 
 				    val (discTrData, discTstData, discTime) = discretization(
-								disc, trData, tstData, outputDir, i)
+								disc, trData, tstData, outputDir, i, saveData=true)
 					trData = discTrData
 					tstData = discTstData
 					taskTime = discTime
@@ -405,15 +423,19 @@ object MultiClassificationUtils {
 					timeResults("FullTime").sum / timeResults("FullTime").size + " seconds.\n"
 					
 			// Confusion Matrix		
-			val aggTstConfMatrix = ConfusionMatrix.apply(predictions.map(_._2).reduceLeft(_ union _), 
-			    typeConv.last)	
+			val str = typeConv.last.mkString("\n")
+			println("Conversor: " + str)
+			val aggTstConfMatrix = ConfusionMatrix.apply(predictions.map(_._2).reduceLeft(_ ++ _), 
+			    typeConv.last)			    
+		    output += "Test Confusion Matrix\n" + aggTstConfMatrix.toString
 		    output += aggTstConfMatrix.fValue.foldLeft("\t")((str, t) => str + "\t" + t._1) + "\n"
+		    
 		    output += aggTstConfMatrix.fValue.foldLeft("F-Measure:")((str, t) => str + "\t" + t._2) + "\n"
 		    output += aggTstConfMatrix.precision.foldLeft("Precision:")((str, t) => str + "\t" + t._2) + "\n"
 		    output += aggTstConfMatrix.recall.foldLeft("Recall:")((str, t) => str + "\t" + t._2) + "\n"
-		    output += aggTstConfMatrix.specificity.foldLeft("Specificity:")((str, t) => str + "\t" + t._2) + "\n"
-		    output += "Test Confusion Matrix\n" + aggTstConfMatrix.toString
-		    val aggTraConfMatrix = ConfusionMatrix.apply(predictions.map(_._1).reduceLeft(_ union _), 
+		    output += aggTstConfMatrix.specificity.foldLeft("Specificity:")((str, t) => str + "\t" + t._2) + "\n\n"
+		    
+		    val aggTraConfMatrix = ConfusionMatrix.apply(predictions.map(_._1).reduceLeft(_ ++ _), 
 			    typeConv.last)
 		    output += "Train Confusion Matrix\n" + aggTraConfMatrix.toString
 			println(output)

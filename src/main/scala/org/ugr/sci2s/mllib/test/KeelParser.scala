@@ -9,7 +9,7 @@ import org.apache.spark.SparkContext
 
 object KeelParser {
   
-	def parseHeaderFile (sc: SparkContext, file: String): Array[Map[String, Double]] = {
+	def parseHeaderFile (sc: SparkContext, file: String, unityNorm: Boolean = false): Array[Map[String, Double]] = {
   	  val header = sc.textFile(file)
   	  // Java code classes
   	  var arr: ArrayList[String] = new ArrayList[String]
@@ -23,8 +23,10 @@ object KeelParser {
   		  if(Attributes.getAttribute(i).getType == Attribute.NOMINAL){
   			  val values: java.util.Vector[String] = Attributes.getAttribute(i).getNominalValuesList()
   					  .asInstanceOf[java.util.Vector[String]]
-			  val gen = for (j <- 0 until values.size) 
-			    yield (values.get(j) -> j.toDouble / (values.size - 1))
+  			  // Transform nominal values to Integer
+			  val gen = for (j <- 0 until values.size) yield 
+			  		if(unityNorm) (values.get(j) -> j.toDouble / (values.size - 1))
+			    	else (values.get(j) -> j.toDouble) 
 			  conv(i) = gen.toMap
   		  }    	
   	  }

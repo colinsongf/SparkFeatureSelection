@@ -74,17 +74,20 @@ class ConfusionMatrixImpl(val dataAndPreds: RDD[(Double, Double)])
       }
       lhs
     })
-
-  val lablelIndexMap = dataAndPreds.map(_._1).distinct.collect.zipWithIndex.toMap
-  	print(lablelIndexMap.toString)
-  var innerMatrix = DoubleMatrix.zeros(lablelIndexMap.size, lablelIndexMap.size)
+    val labelIndexMap = (dataAndPreds.map(_._1).distinct.collect 
+        ++ dataAndPreds.map(_._2).distinct.collect)
+        .toSet
+    	.zipWithIndex
+    	.toMap
+  	print(labelIndexMap.toString)
+  	var innerMatrix = DoubleMatrix.zeros(labelIndexMap.size, labelIndexMap.size)
   
-  result.foreach {
-    case (key, value) =>
-      val row = lablelIndexMap(key._1)
-      val col = lablelIndexMap(key._2)
-      innerMatrix.put(row, col, value)
-  }
+  	result.foreach {
+  		case (key, value) =>
+  		val row = labelIndexMap(key._1)
+  		val col = labelIndexMap(key._2)
+  		innerMatrix.put(row, col, value)
+  	}
 
   private val colSum = innerMatrix.columnSums().toArray()
   private val rowSum = innerMatrix.rowSums().toArray()
@@ -95,34 +98,34 @@ class ConfusionMatrixImpl(val dataAndPreds: RDD[(Double, Double)])
   }
 
   def precision(label: Double): Double = {
-    if (!lablelIndexMap.contains(label)) {
+    if (!labelIndexMap.contains(label)) {
       throw new RuntimeException("No such label:" + label +
-        ", the availabel labels are following:" + lablelIndexMap.map(_._1).mkString(","))
+        ", the availabel labels are following:" + labelIndexMap.map(_._1).mkString(","))
     }
-    val index = lablelIndexMap(label)
+    val index = labelIndexMap(label)
     val correct = innerMatrix.get(index, index)
     val all = rowSum(index)
     correct / all
   }
 
   def recall(label: Double): Double = {
-    if (!lablelIndexMap.contains(label)) {
+    if (!labelIndexMap.contains(label)) {
       throw new RuntimeException("No such label:" + label +
-        ", the availabel labels are following:" + lablelIndexMap.map(_._1).mkString(","))
+        ", the availabel labels are following:" + labelIndexMap.map(_._1).mkString(","))
     }
-    val index = lablelIndexMap(label)
+    val index = labelIndexMap(label)
     val correct = innerMatrix.get(index, index)
     val all = colSum(index)
     correct / all
   }
   
   def specificity(label: Double): Double = {
-	if (!lablelIndexMap.contains(label)) {
+	if (!labelIndexMap.contains(label)) {
       throw new RuntimeException("No such label:" + label +
-        ", the availabel labels are following:" + lablelIndexMap.map(_._1).mkString(","))
+        ", the availabel labels are following:" + labelIndexMap.map(_._1).mkString(","))
     }
 	
-	val diagonalSum = lablelIndexMap.map(e => {
+	val diagonalSum = labelIndexMap.map(e => {
 		val (auxLabel, colIndex) = (e._1, e._2)
 		if(auxLabel != label) (innerMatrix.get(colIndex, colIndex), colSum(colIndex)) else (0.0, 0.0)
       })
@@ -131,21 +134,21 @@ class ConfusionMatrixImpl(val dataAndPreds: RDD[(Double, Double)])
   }
   
   def specificity: Array[(Double, Double)] = {
-    lablelIndexMap.map(e => {
+    labelIndexMap.map(e => {
       val label = e._1
       (label, specificity(label))
     }).toArray
   }
 
   def precision: Array[(Double, Double)] = {
-    lablelIndexMap.map(e => {
+    labelIndexMap.map(e => {
       val label = e._1
       (label, precision(label))
     }).toArray
   }
 
   def recall: Array[(Double, Double)] = {
-    lablelIndexMap.map(e => {
+    labelIndexMap.map(e => {
       val label = e._1
       (label, recall(label))
     }).toArray
@@ -162,21 +165,21 @@ class ConfusionMatrixImpl(val dataAndPreds: RDD[(Double, Double)])
   }
 
   def fValueWithBeta(beta: Double): Array[(Double, Double)] = {
-    lablelIndexMap.map(e => {
+    labelIndexMap.map(e => {
       val label = e._1
       (label, fValueWithBeta(label, beta))
     }).toArray
   }
 
   def accuracy: Double = {
-    val correct = lablelIndexMap.map(e => innerMatrix.get(e._2, e._2)).sum
+    val correct = labelIndexMap.map(e => innerMatrix.get(e._2, e._2)).sum
     val total = colSum.sum
     correct / total
   }
 
   override def toString: String = {
     val sb = new StringBuffer();
-    val maxLabelLength = lablelIndexMap.map(_._1.toString.length()).max
+    val maxLabelLength = labelIndexMap.map(_._1.toString.length()).max
     sb.append("Confusion Matrix, row=true, column=predicted  accuracy=" + accuracy + "\n")
     val maxValueLength = innerMatrix.max().toString.length()
     val cellLength = (if (maxLabelLength > maxValueLength) maxLabelLength else maxValueLength) + 1
@@ -184,16 +187,16 @@ class ConfusionMatrixImpl(val dataAndPreds: RDD[(Double, Double)])
     def format(value: String) = String.format("%1$-" + cellLength + "s\t", value)
     
     sb.append(format(""))
-    lablelIndexMap.foreach(e=>{
+    labelIndexMap.foreach(e=>{
       sb.append(format(e._1.toString))
     })
     sb.append("\n")
     
-    lablelIndexMap.foreach(e => {
+    labelIndexMap.foreach(e => {
       val rowLabel = e._1
       val rowIndex = e._2
       sb.append(format(rowLabel.toString))
-      lablelIndexMap.foreach(e2 => {
+      labelIndexMap.foreach(e2 => {
         val label = e2._1
         val colIndex = e2._2
         sb.append(format(innerMatrix.get(rowIndex, colIndex).toInt.toString))
@@ -303,11 +306,11 @@ class ConfusionMatrixWithDictImpl(val data: RDD[(Double, Double)], val dict: Map
     
     dict.foreach(e => {
       val rowLabel = e._1
-      val rowIndex = doubleConfusionMatrix.lablelIndexMap(e._2)
+      val rowIndex = doubleConfusionMatrix.labelIndexMap(e._2)
       sb.append(format(rowLabel.toString))
       dict.foreach(e2 => {
         val label = e2._1
-        val colIndex = doubleConfusionMatrix.lablelIndexMap(e2._2)
+        val colIndex = doubleConfusionMatrix.labelIndexMap(e2._2)
         sb.append(format(doubleConfusionMatrix.innerMatrix.get(rowIndex, colIndex).toInt.toString))
       })
       sb.append("\n")

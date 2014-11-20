@@ -34,7 +34,7 @@ class EntropyMinimizationDiscretizer private (
 
   /**
    * Run the algorithm with the configured parameters on an input.
-   * @param data RDD of LabeledPoint's.
+   * @param data RDD[LabeledPoint].
    * @return A EntropyMinimizationDiscretizerModel with the thresholds to discretize.
    */
   def run(data: RDD[LabeledPoint]) = {
@@ -51,6 +51,10 @@ class EntropyMinimizationDiscretizer private (
     	
     	// Group class values by feature
     	val distinctValues = featureValues.reduceByKey((_,_).zipped.map(_ + _))
+      
+    	/*val featureValues = data.map({
+    		case LabeledPoint(label, values) => (values.toArray(i), labels2Int.value(label))
+    	})*/
 		
     	// Sort these values to perform the boundary points evaluation
     	val sortedValues = distinctValues.sortByKey() 	
@@ -93,7 +97,7 @@ class EntropyMinimizationDiscretizer private (
 	    
   	  	// Get the boundary points with its frequencies
   	  	val initialCandidates = initialThresholds(sortedValues, partitionsHeads, nLabels)
-
+  	  	
   	  	val nCandsApprox = initialCandidates.countApprox(2000).getFinalValue.high
   	  	val thesholdsByFeature = if(nCandsApprox < 1e5) {
   	  		getThresholds(initialCandidates.collect(), nLabels) 
@@ -107,6 +111,55 @@ class EntropyMinimizationDiscretizer private (
     new EntropyMinimizationDiscretizerModel(thresholds)
 
   }
+  
+   /**
+	* Calculates the initial candidate thresholds for a feature (data has to be sorted with
+	* RangePartitioner as its partitioning method)
+	* @param data RDD of (value, label) pairs.
+	* @param nLabels Number of distinct labels in the dataset.
+	* @return RDD of (candidate, class frequencies between last and current candidate) pairs.
+	* 
+	*/
+  private def countFrequencies(data: RDD[(Double, Int)], 
+		  nLabels: Int) = {
+	  
+	  data.mapPartitions({ it =>
+	    
+		  def countFreq(
+		    it: Iterator[(Double, Int)],
+		    lastX: Double,
+		    accumFreqs: Array[Long]): Seq[(Double, Array[Long])] = {
+			
+			if (it.hasNext) {
+				val (x, y) = it.next()
+	    		if (x == lastX) {
+				  // same point than previous
+				  accumFreqs(y) += 1L
+				  countFreq(it, x, accumFreqs)
+	    		} else {
+				  // new point
+	    		  val newAccum = Array.fill[Long](nLabels)(0L)
+	    		  newAccum(y) += 1L
+				  (lastX, accumFreqs) +: countFreq(it, x, newAccum)
+	    		}
+			} else {
+				Seq((lastX, accumFreqs))
+			}			        		
+		  }
+		  
+		  	if (it.hasNext) {	
+		  		val (firstX, firstY) = it.next() // first element
+		  		val accumFreqs = Array.fill[Long](nLabels)(0L)
+		  		accumFreqs(firstY) += 1L
+				val frequencies = countFreq(it, firstX, accumFreqs)
+				frequencies.reverse.toIterator
+		  	} else {
+		  		Iterator.empty
+		  	}	
+	  })
+  
+  }
+  
   
   /**
    * Calculates the initial candidate thresholds for a feature
@@ -189,6 +242,9 @@ class EntropyMinimizationDiscretizer private (
 						  accumFreqs = (accumFreqs, freqs).zipped.map(_ + _)
 			    	  }	
 			      }
+			      
+			      // We add the last point in the last partition
+			      if(index == (numPartitions - 1)) result = (lastX, accumFreqs.clone) +: result
 	  	  	}
 	  	  	
 	  	  	result.reverse.toIterator
@@ -253,7 +309,7 @@ class EntropyMinimizationDiscretizer private (
     stack.enqueue(((Double.NegativeInfinity, Double.PositiveInfinity), None))
     var result = Seq(Double.NegativeInfinity)
 
-    // While more elements to eval, continue
+    // While more elements to evaluate, continue
     while(stack.length > 0 && result.size < this.maxBins){
 
       val (bounds, lastThresh) = stack.dequeue
