@@ -27,7 +27,7 @@ object NBtest {
 		val initStartTime = System.nanoTime()
 
 		if (args.length < 3) {
-		  System.err.println("Usage: NBtest <header-file> <train-file> <test-file> <output-dir> [<lambda>]")
+		  System.err.println("Usage: NBtest <header-file> <train-file> <test-file> <output-dir> <fs-criterion> [<lambda>]")
 		  System.exit(1)
 		}
 		
@@ -35,16 +35,15 @@ object NBtest {
 		val trainFile = args(1)
 		val testFile = args(2)
 		val outputDir = args(3) + "/"
-		val nonDefaut = args.length > 4
-		val lambda = if (nonDefaut) args(4).toDouble else 1.0
+		val infoCriterion = args(4)
+		val nonDefaut = args.length > 5
+		val lambda = if (nonDefaut) args(5).toDouble else 1.0
 
-		val conf = new SparkConf().setAppName("MLlib Benchmarking")
-
+		val conf = new SparkConf().setAppName("NBtest")
 		val sc = new SparkContext(conf)
 		
 		def classify = (train: RDD[LabeledPoint]) => {
 		  val model = NaiveBayes.train(train, lambda)
-		  //calcThreshold(model, train)
 		  model
 		}
 		
@@ -60,10 +59,10 @@ object NBtest {
 		
 		def featureSelect = (data: RDD[LabeledPoint]) => {
 			// Feature Selection
-			val criterion = new InfoThCriterionFactory("mrmr")
+			val criterion = new InfoThCriterionFactory(infoCriterion)
 			val model = InfoThFeatureSelection.train(criterion, 
 		      data,
-		      19) // number of features to select (value from the best hit in ECBDL14)
+		      100) // number of features to select
 		      //0) // without pool 
 		    val reducedData = model.select(data)
 		    (model, reducedData)

@@ -39,7 +39,7 @@ object SVMtest {
 		val initStartTime = System.nanoTime()
 
 		if (args.length < 4) {
-		  System.err.println("Usage: SVMtest <header-file> <train-file> <test-file> <output-dir>" + 
+		  System.err.println("Usage: SVMtest <header-file> <train-file> <test-file> <output-dir> <info-criterion>" + 
 		      "[<numIter> <stepSize> <regParam> <miniBatchFraction>]")
 		  System.exit(1)
 		}
@@ -48,15 +48,14 @@ object SVMtest {
 		val trainFile = args(1)
 		val testFile = args(2)
 		val outputDir = args(3) + "/"
-		val nonDefaut = args.length > 4
-		val numIter = if(nonDefaut) args(4).toInt else 100 
-		val stepSize = if(nonDefaut) args(5).toDouble else 1.0 
-		val regParam = if(nonDefaut) args(6).toDouble else 1.0 
-		val miniBatchFraction = if(nonDefaut) args(7).toDouble else 1.0
-		val conf = new SparkConf().setAppName("MLlib Benchmarking")
+		val infoCriterion = args(4)
+		val nonDefaut = args.length > 5
+		val numIter = if(nonDefaut) args(5).toInt else 1 // default: 100 
+		val stepSize = if(nonDefaut) args(6).toDouble else 1.0 
+		val regParam = if(nonDefaut) args(7).toDouble else 1.0 
+		val miniBatchFraction = if(nonDefaut) args(8).toDouble else 1.0
 		
-		//conf.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
-		//conf.set("spark.kryo.registrator", "mypackage.MyRegistrator")
+		val conf = new SparkConf().setAppName("SVMtest")
 		val sc = new SparkContext(conf)
 		
 		def classify = (train: RDD[LabeledPoint]) => {
@@ -77,10 +76,11 @@ object SVMtest {
 		
 		def featureSelect = (data: RDD[LabeledPoint]) => {
 			// Feature Selection
-			val criterion = new InfoThCriterionFactory("mrmr")
+			val criterion = new InfoThCriterionFactory(infoCriterion)
 			val model = InfoThFeatureSelection.train(criterion, 
 		      data,
-		      19) // number of features to select
+		      100) // number of features to select
+		      //0) // without pool 
 		    val reducedData = model.select(data)
 		    (model, reducedData)
 		}

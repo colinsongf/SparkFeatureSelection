@@ -163,13 +163,13 @@ object MultiClassificationUtils {
 							features.toArray.map(_.toInt).mkString(",") + "," + label.toInt
 						})
 						
-						strTrainDisc.saveAsTextFile(outputDir + "disc_train_" + iteration)
+						strTrainDisc.saveAsTextFile(outputDir + "disc_train_" + iteration + ".csv")
 						
 						val strTstDisc = discTestData.map({case LabeledPoint(label, features) => 
 							features.toArray.map(_.toInt).mkString(",") + "," + label.toInt
 						})
 						
-						strTstDisc.saveAsTextFile(outputDir + "disc_tst_" + iteration)						
+						strTstDisc.saveAsTextFile(outputDir + "disc_tst_" + iteration + ".csv")						
 					}
 					
 					// Save the obtained thresholds in a HDFS file (as a sequence)
@@ -177,7 +177,7 @@ object MultiClassificationUtils {
 								elem._1 + "\t" + elem._2.mkString("\t") + "\n")
 					val parThresholds = sc.parallelize(Array(output), 1)
 					parThresholds.saveAsTextFile(outputDir + "discThresholds_" + iteration)
-					val strTime = sc.parallelize(discTime.toString, 1)
+					val strTime = sc.parallelize(Array(discTime.toString), 1)
 					strTime.saveAsTextFile(outputDir + "disc_time_" + iteration)
 					
 					(discData, discTestData, discTime)
@@ -215,7 +215,7 @@ object MultiClassificationUtils {
 					val output = selectedAtts.mkString("\n")
 					val parFSscheme = sc.parallelize(Array(output), 1)
 					parFSscheme.saveAsTextFile(outputDir + "FSscheme_" + iteration)
-					val strTime = sc.parallelize(FSTime.toString, 1)
+					val strTime = sc.parallelize(Array(FSTime.toString), 1)
 					strTime.saveAsTextFile(outputDir + "fs_time_" + iteration)
 					
 					(reductedData, featureSelector.select(test), FSTime)
@@ -267,7 +267,7 @@ object MultiClassificationUtils {
 					val outputTest = tstValuesAndPreds.map(t => reverseConv.getOrElse(t._1, "") + "\t" +
 						    reverseConv.getOrElse(t._2, ""))    
 					outputTest.saveAsTextFile(outputDir + "result_" + iteration + ".tst")		
-					val strTime = sc.parallelize(classificationTime.toString, 1)
+					val strTime = sc.parallelize(Array(classificationTime.toString), 1)
 					strTime.saveAsTextFile(outputDir + "classification_time_" + iteration)
 					
 					(traValuesAndPreds, tstValuesAndPreds, classificationTime)
