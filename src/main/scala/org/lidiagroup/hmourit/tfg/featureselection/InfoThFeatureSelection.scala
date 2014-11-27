@@ -16,17 +16,15 @@ class InfoThFeatureSelection private (
   private type Pool = RDD[(Int, InfoThCriterion)]
   private case class F(feat: Int, crit: Double)
   
-  def calulateMutualInformation(
-       applyMI: Seq[Int] => scala.collection.Map[Int,(Double, Double)],
-       varX: Seq[Int],
+  def calcMutualInformation(
+       applyMI: Seq[Int] => scala.collection.Map[Int,(Double, Double)], 
+       varX: Seq[Int], 
        miniBatchFraction: Float = .5f) : Array[(Int, (Double, Double))] = {
     
-	  val miniBatchSize = if (varX.length > 100) math.round(
-	    varX.length * miniBatchFraction) else varX.length
+	  val miniBatchSize = if (varX.length > 100) math.round(varX.length * miniBatchFraction) else varX.length
 	  val featuresWindow = varX.grouped(miniBatchSize).toArray
 	  val resultsByWindow = for (w <- featuresWindow) yield applyMI(w).toArray
-	  resultsByWindow
-	  	.reduce(_ ++ _)	  
+	  resultsByWindow.reduce(_ ++ _)	  
   }
 
   def setPoolSize(poolSize: Int) = {
@@ -41,41 +39,44 @@ class InfoThFeatureSelection private (
       label: Int,
       nElements: Long,
       miniBatchFraction: Float = 1.f)
-    : Seq[F] = {    
-        
+    : Seq[F] = {            
 
     // calculate relevance
     val calcMI = IT.miAndCmi(data, _: Seq[Int], label, None, nElements)
-    val MiAndCmi = calulateMutualInformation(calcMI,  1 to nFeatures, miniBatchFraction)
-	    
-	var pool = MiAndCmi.map({ case (k, (mi, _)) => (k, criterionFactory.getCriterion.init(mi)) })
+    val MiAndCmi = calcMutualInformation(calcMI, 1 to nFeatures, miniBatchFraction)
+	var pool = MiAndCmi.map({ case (k, (mi, _)) => (k, criterionFactory.getCriterion.init(mi)) }).toMap
+	
+	// Print most relevant features
+    val strMRMR = MiAndCmi.sortBy(-_._2._1)
+    	.take(nToSelect)
+    	.map({case (f, (mi, _)) => f + "\t" + "%.4f" format mi})
+    	.mkString("\n")
+    println("\n*** MaxRel features ***\nFeature\tScore\n" + strMRMR)
 	
     // get maximum and select it
-    var max = pool.maxBy(_._2.score)
-    var selected = Seq(F(max._1, max._2.score))
-    var toSelect = pool.map(_._1) diff Seq(max._1)
+    val firstMax = pool.maxBy(_._2.score)
+    var selected = Seq(F(firstMax._1, firstMax._2.score))
+    pool = pool - firstMax._1
 
     while (selected.size < nToSelect) {
       // update pool
       val calcMI = IT.miAndCmi(data, _: Seq[Int], selected.head.feat, Some(label), nElements)
-	  val newMiAndCmi = calulateMutualInformation(calcMI, toSelect, miniBatchFraction)
-			  .toMap
-      pool = pool.flatMap({ case (k, crit) =>
+  	  val newMiAndCmi = calcMutualInformation(calcMI, pool.keys.toSeq, miniBatchFraction).toMap
+      pool.foreach({ case (k, crit) =>
         newMiAndCmi.get(k) match {
-          case Some((mi, cmi)) => Seq((k, crit.update(mi, cmi)))
-          case None => Seq.empty[(Int, InfoThCriterion)]
+          case Some((mi, cmi)) => crit.update(mi, cmi)
+          case None => 
         }
       })
 
-      // look for maximum
-      max = pool.maxBy(_._2.score)
+      // get maximum and select it
+      val max = pool.maxBy(_._2.score)
 
       // select feature
       selected = F(max._1, max._2.score) +: selected
-      toSelect = toSelect diff Seq(max._1)
-
+      pool = pool - max._1
     }
-
+    
     selected.reverse
   }
 
@@ -85,68 +86,81 @@ class InfoThFeatureSelection private (
       nFeatures: Int,
       label: Int,
       nElements: Long, 
-      miniBatchFraction: Float = 1.f)
+      miniBatchFraction: Float = .1f)
     : Seq[F] = {
 
     // calculate relevance
     val calcMI = IT.miAndCmi(data, _: Seq[Int], label, None, nElements)
-    var rels = calulateMutualInformation(calcMI, 1 to nFeatures, miniBatchFraction)
+    var orderedRels = calcMutualInformation(calcMI, 1 to nFeatures, miniBatchFraction)
     	.map({ case (k, (mi, _)) => (k, mi) })
         .sortBy(-_._2)
+        
+    // Print most relevant features
+    val strRels = orderedRels
+    	.take(nToSelect)
+    	.map({case (f, c) => f + "\t" + "%.4f" format c}).mkString("\n")
+    println("\n*** MaxRel features ***\nFeature\tScore\n" + strRels)
 	
     // extract pool
-    val initialPoolSize = math.min(math.max(poolSize, nToSelect), rels.length)
-    var pool = rels.take(initialPoolSize).map({ case (k, mi) =>
+    val initialPoolSize = math.min(math.max(poolSize, nToSelect), orderedRels.length)
+    var pool = orderedRels.take(initialPoolSize).map({ case (k, mi) =>
     	(k, criterionFactory.getCriterion.init(mi))
-    })
-    var min = pool.last._2.asInstanceOf[InfoThCriterion with Bound]
-    var toSelect = pool.map(_._1)
-    rels = rels.drop(initialPoolSize)
+    }).toMap
+    orderedRels = orderedRels.drop(initialPoolSize)
 
     // select feature with the maximum relevance
-    var max = pool.head
+    var max = pool.maxBy(_._2.score)
     var selected = Seq(F(max._1, max._2.score))
-    toSelect = toSelect diff Seq(max._1)
+    pool = pool - max._1
 
     while (selected.size < nToSelect) {
 
       // update pool
       val calcMI = IT.miAndCmi(data, _: Seq[Int], selected.head.feat, Some(label), nElements)
-	  val newMiAndCmi = calulateMutualInformation(calcMI, toSelect, miniBatchFraction).toMap
-      pool = pool.flatMap({ case (k, crit) =>
+	  val newMiAndCmi = calcMutualInformation(calcMI, pool.keys.toSeq, miniBatchFraction).toMap
+      pool.foreach({ case (k, crit) =>
         newMiAndCmi.get(k) match {
-          case Some((mi, cmi)) => Seq((k, crit.update(mi, cmi)))
-          case None => Seq.empty[(Int, InfoThCriterion)]
+          case Some((mi, cmi)) => crit.update(mi, cmi)
+          case None => 
         }
       })
       
-      // look for maximum
+      // look for maximum and bound
       max = pool.maxBy(_._2.score)
-
+      var min = pool.minBy(_._2.score)._2.asInstanceOf[InfoThCriterion with Bound]
+      
       // increase pool if necessary
-      while (max._2.score < min.bound && toSelect.size + selected.size < nFeatures) {
-
-        // increase pool
-        val realPoolSize = math.min(poolSize, rels.length)
-        pool ++= rels.take(realPoolSize).map({ case (k, mi) => (k, criterionFactory.getCriterion.init(mi)) })
-        rels = rels.drop(realPoolSize)
-        min = pool.last._2.asInstanceOf[InfoThCriterion with Bound]
-
-        // do missed calculations
-        for (i <- (pool.length - realPoolSize) until pool.length) {
-        	val calcMI = IT.miAndCmi(data, _: Seq[Int], i, Some(label), nElements).toMap
-			val missedMiAndCmi = calulateMutualInformation(calcMI, selected.map(_.feat), miniBatchFraction)
-			missedMiAndCmi.foreach({ case (_, (mi, cmi)) => pool(i)._2.update(mi, cmi)})
-			toSelect = pool(i)._1 +: toSelect
-        }
-
+      while (max._2.score < min.bound && orderedRels.size > 0) { 
+        
+        val realPoolSize = math.min(poolSize, orderedRels.length)        
+        val newFeatures = orderedRels.take(realPoolSize).map{ case (k, mi) => (k, criterionFactory.getCriterion.init(mi)) }
+        
+        // do missed calculations (for each previously selected attribute)
+        selected.foreach({case F(feat, c) =>
+        	val calcMI = IT.miAndCmi(data, _: Seq[Int], feat, Some(label), nElements)
+			val missedMiAndCmi = calcMutualInformation(calcMI, newFeatures.map(_._1), miniBatchFraction).toMap
+			val strRedundancy = missedMiAndCmi.mkString("\n")
+			println("New features Redudancy: \n" + strRedundancy)
+			newFeatures.foreach{ case (feat, crit) => 
+			  missedMiAndCmi.get(feat) match {
+  				case Some((mi, cmi)) => crit.update(mi, cmi)
+  				case None => 
+			  }		  
+        	}
+        })
+        
+        // Add new features to the pool and remove them from the other set
+        pool ++= newFeatures
+        orderedRels = orderedRels.drop(realPoolSize)
+        
         // look for maximum
-        max = pool.maxBy(_._2.score)
-
+        max = pool.maxBy(_._2.score)        
+        min = pool.minBy(_._2.score)._2.asInstanceOf[InfoThCriterion with Bound]   
       }
+      
       // select feature
       selected = F(max._1, max._2.score) +: selected
-      toSelect = toSelect diff Seq(max._1)
+      pool = pool - max._1
     }
 
     selected.reverse
@@ -163,14 +177,17 @@ class InfoThFeatureSelection private (
     val array = data.map({ case LabeledPoint(label, values) => (label +: values.toArray) })//.cache()
     val nElements = array.count()
     
-    var selected = Seq.empty[F]
-    criterionFactory.getCriterion match {
+    val selected = criterionFactory.getCriterion match {
       case _: InfoThCriterion with Bound if poolSize != 0 =>
-        selected = selectFeaturesWithPool(array, nToSelect, nFeatures, 0, nElements, .5f)
+        selectFeaturesWithPool(array, nToSelect, nFeatures, 0, nElements, .5f)
       case _: InfoThCriterion =>
-        selected = selectFeaturesWithoutPool(array, nToSelect, nFeatures, 0, nElements, .5f)
-      case _ =>
+        selectFeaturesWithoutPool(array, nToSelect, nFeatures, 0, nElements, .5f)
+      case _ => Seq.empty[F]
     }
+    
+    // Print best features according to the mRMR measure
+    val strMRMR = selected.map({case F(f, c) => f + "\t" + "%.4f" format c}).mkString("\n")
+    println("\n*** mRMR features ***\nFeature\tScore\n" + strMRMR)
 
     new InfoThFeatureSelectionModel(selected.map({ case F(feat, rel) => feat - 1 }).toArray)
   }

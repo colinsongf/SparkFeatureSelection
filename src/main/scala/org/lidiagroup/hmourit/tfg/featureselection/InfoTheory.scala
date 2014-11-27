@@ -19,7 +19,7 @@ object InfoTheory {
    * @param varX Indexes of variables
    * @param varY Index of the second variable
    * @param varZ Indexes of the conditioning values
-   * @param n    Number of datapoints
+   * @param n    Number of instances
    * @return     RDD of (variable, (MI, CMI))
    */
   def miAndCmi(
@@ -31,6 +31,8 @@ object InfoTheory {
 
     require(varX.size != 0)
 
+    //val combinations2 = data.map(d => for(x <- varX) yield ((x, d(x), d(varY), varZ match {case Some(i) => Some(d(i)) case None => None}), 1))
+    
     // Create every combination
     val combinations =
       data
