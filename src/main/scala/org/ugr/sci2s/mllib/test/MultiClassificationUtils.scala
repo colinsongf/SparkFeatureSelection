@@ -32,6 +32,22 @@ import org.apache.spark.mllib.regression.LabeledPoint
 
 object MultiClassificationUtils {
   
+	    def toInt(s: String, default: Int): Int = {
+			try {
+				s.toInt
+			} catch {
+				case e:Exception => default
+			}
+	    }	
+	
+	    def toDouble(s: String, default: Double): Double = {
+			try {
+				s.toDouble
+			} catch {
+				case e: Exception => default
+			}
+		}
+  
   		private def parseThresholds (str: String): (Int, Seq[Double])= {
 			val tokens = str split "\t"
 			val points = tokens.slice(1, tokens.length).map(_.toDouble)
@@ -293,7 +309,7 @@ object MultiClassificationUtils {
 		    featureSelect: Option[(RDD[LabeledPoint]) => (FeatureSelectionModel[LabeledPoint], RDD[LabeledPoint])], 
 		    classify: Option[(RDD[LabeledPoint]) => ClassificationModel],
 		    headerFile: String, 
-		    inputData: Object, 
+		    inputData: Any, 
 		    outputDir: String, 
 		    algoInfo: String) {
 

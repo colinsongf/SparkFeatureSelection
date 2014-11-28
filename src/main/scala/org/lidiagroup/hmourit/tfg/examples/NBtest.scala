@@ -29,7 +29,7 @@ object NBtest {
 		if (args.length < 3) {
 		  System.err.println("Usage: NBtest <header-file> <train-file> <test-file> <output-dir> <fs-criterion> [<lambda>]")
 		  System.exit(1)
-		}
+		}	
 		
 		val headerFile = args(0)
 		val trainFile = args(1)
@@ -43,8 +43,8 @@ object NBtest {
 		val sc = new SparkContext(conf)
 		
 		def classify = (train: RDD[LabeledPoint]) => {
-		  val model = NaiveBayes.train(train, lambda)
-		  model
+			val model = NaiveBayes.train(train, lambda)
+			model
 		}
 		
 		val ECBDLRangeContFeatures = (0 to 2) ++ (21 to 38) ++ (93 to 130) ++ (151 to 630)
