@@ -38,7 +38,7 @@ class InfoThFeatureSelection private (
       nFeatures: Int,
       label: Int,
       nElements: Long,
-      miniBatchFraction: Float = 1.f)
+      miniBatchFraction: Float)
     : Seq[F] = {            
 
     // calculate relevance
@@ -86,7 +86,7 @@ class InfoThFeatureSelection private (
       nFeatures: Int,
       label: Int,
       nElements: Long, 
-      miniBatchFraction: Float = .1f)
+      miniBatchFraction: Float)
     : Seq[F] = {
 
     // calculate relevance
@@ -167,7 +167,7 @@ class InfoThFeatureSelection private (
 
   }
 
-  def run(data: RDD[LabeledPoint], nToSelect: Int): InfoThFeatureSelectionModel = {
+  def run(data: RDD[LabeledPoint], nToSelect: Int, miniBatchFraction: Float): InfoThFeatureSelectionModel = {
     val nFeatures = data.first.features.size
 
     if (nToSelect > nFeatures) {
@@ -179,9 +179,9 @@ class InfoThFeatureSelection private (
     
     val selected = criterionFactory.getCriterion match {
       case _: InfoThCriterion with Bound if poolSize != 0 =>
-        selectFeaturesWithPool(array, nToSelect, nFeatures, 0, nElements, .5f)
+        selectFeaturesWithPool(array, nToSelect, nFeatures, 0, nElements, miniBatchFraction)
       case _: InfoThCriterion =>
-        selectFeaturesWithoutPool(array, nToSelect, nFeatures, 0, nElements, .5f)
+        selectFeaturesWithoutPool(array, nToSelect, nFeatures, 0, nElements, miniBatchFraction)
       case _ => Seq.empty[F]
     }
     
@@ -198,7 +198,8 @@ object InfoThFeatureSelection {
   def train(criterionFactory: InfoThCriterionFactory,
       data: RDD[LabeledPoint],
       nToSelect: Int,
-      poolSize: Int = 30) = {
-    new InfoThFeatureSelection(criterionFactory, poolSize).run(data, nToSelect)
+      poolSize: Int = 30,
+      miniBatchFraction: Float = .5f) = {
+    new InfoThFeatureSelection(criterionFactory, poolSize).run(data, nToSelect, miniBatchFraction)
   }
 }

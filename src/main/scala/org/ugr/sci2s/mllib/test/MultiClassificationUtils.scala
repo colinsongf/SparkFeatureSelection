@@ -148,18 +148,18 @@ object MultiClassificationUtils {
 				test: RDD[LabeledPoint], 
 				outputDir: String,
 				iteration: Int,
-				saveData: Boolean = false) = {
+				saveDiscretizedData: Boolean = false) = {
 		  
 			val sc = train.context
 		  	/** Check if the results for this fold are already written in disk
 		  	 *  if not, we calculate them
 		  	 **/
 			try {
-				val thresholds = sc.textFile(outputDir + "discThresholds_" + iteration).filter(!_.isEmpty())
+				val thresholds = sc.textFile(outputDir + "/discThresholds_" + iteration).filter(!_.isEmpty())
 									.map(parseThresholds).collect.toMap
 				
 				val discAlgorithm = new EntropyMinimizationDiscretizerModel(thresholds)
-				val discTime = sc.textFile(outputDir + "disc_time_" + iteration)
+				val discTime = sc.textFile(outputDir + "/disc_time_" + iteration)
 						.filter(!_.isEmpty())
 						.map(_.toDouble)
 						.first
@@ -174,27 +174,27 @@ object MultiClassificationUtils {
 					val discTestData = discAlgorithm.discretize(test)
 					
 					// Save discretized data 
-					if(saveData) {
+					if(saveDiscretizedData) {
  						val strTrainDisc = discData.map({case LabeledPoint(label, features) => 
 							features.toArray.map(_.toInt).mkString(",") + "," + label.toInt
 						})
 						
-						strTrainDisc.saveAsTextFile(outputDir + "disc_train_" + iteration + ".csv")
+						strTrainDisc.saveAsTextFile(outputDir + "/disc_train_" + iteration + ".csv")
 						
 						val strTstDisc = discTestData.map({case LabeledPoint(label, features) => 
 							features.toArray.map(_.toInt).mkString(",") + "," + label.toInt
 						})
 						
-						strTstDisc.saveAsTextFile(outputDir + "disc_tst_" + iteration + ".csv")						
+						strTstDisc.saveAsTextFile(outputDir + "/disc_tst_" + iteration + ".csv")						
 					}
 					
 					// Save the obtained thresholds in a HDFS file (as a sequence)
 					val output = thresholds.foldLeft("")((str, elem) => str + 
 								elem._1 + "\t" + elem._2.mkString("\t") + "\n")
 					val parThresholds = sc.parallelize(Array(output), 1)
-					parThresholds.saveAsTextFile(outputDir + "discThresholds_" + iteration)
+					parThresholds.saveAsTextFile(outputDir + "/discThresholds_" + iteration)
 					val strTime = sc.parallelize(Array(discTime.toString), 1)
-					strTime.saveAsTextFile(outputDir + "disc_time_" + iteration)
+					strTime.saveAsTextFile(outputDir + "/disc_time_" + iteration)
 					
 					(discData, discTestData, discTime)
 			}		
@@ -212,11 +212,11 @@ object MultiClassificationUtils {
 		  	 *  if not, we calculate them
 		  	 **/
 			try {
-				val selectedAtts = sc.textFile(outputDir + "FSscheme_" + iteration).filter(!_.isEmpty())
+				val selectedAtts = sc.textFile(outputDir + "/FSscheme_" + iteration).filter(!_.isEmpty())
 										.map(parseSelectedAtts).collect				
 				val featureSelector = new InfoThFeatureSelectionModel(selectedAtts)
 				
-				val FSTime = sc.textFile(outputDir + "fs_time_" + iteration)
+				val FSTime = sc.textFile(outputDir + "/fs_time_" + iteration)
 						.filter(!_.isEmpty())
 						.map(_.toDouble)
 						.first
@@ -230,9 +230,9 @@ object MultiClassificationUtils {
 					// Save the obtained FS scheme in a HDFS file (as a sequence)
 					val output = selectedAtts.mkString("\n")
 					val parFSscheme = sc.parallelize(Array(output), 1)
-					parFSscheme.saveAsTextFile(outputDir + "FSscheme_" + iteration)
+					parFSscheme.saveAsTextFile(outputDir + "/FSscheme_" + iteration)
 					val strTime = sc.parallelize(Array(FSTime.toString), 1)
-					strTime.saveAsTextFile(outputDir + "fs_time_" + iteration)
+					strTime.saveAsTextFile(outputDir + "/fs_time_" + iteration)
 					
 					(reductedData, featureSelector.select(test), FSTime)
 			}
@@ -252,15 +252,15 @@ object MultiClassificationUtils {
 		  	 *  if not, we calculate them
 		  	 **/
 			try {
-				val traValuesAndPreds = sc.textFile(outputDir + "result_" + iteration + ".tra")
+				val traValuesAndPreds = sc.textFile(outputDir + "/result_" + iteration + ".tra")
 						.filter(!_.isEmpty())
 						.map(parsePredictions)
 						
-				val tstValuesAndPreds = sc.textFile(outputDir + "result_" + iteration + ".tst")
+				val tstValuesAndPreds = sc.textFile(outputDir + "/result_" + iteration + ".tst")
 						.filter(!_.isEmpty())
 						.map(parsePredictions)
 						
-				val classifficationTime = sc.textFile(outputDir + "classification_time_" + iteration)
+				val classifficationTime = sc.textFile(outputDir + "/classification_time_" + iteration)
 						.filter(!_.isEmpty())
 						.map(_.toDouble)	
 						.first
@@ -279,12 +279,12 @@ object MultiClassificationUtils {
 					val reverseConv = typeConv.last.map(_.swap) // for last class
 					val outputTrain = traValuesAndPreds.map(t => reverseConv.getOrElse(t._1, "") + "\t" +
 						    reverseConv.getOrElse(t._2, ""))   
-					outputTrain.saveAsTextFile(outputDir + "result_" + iteration + ".tra")
+					outputTrain.saveAsTextFile(outputDir + "/result_" + iteration + ".tra")
 					val outputTest = tstValuesAndPreds.map(t => reverseConv.getOrElse(t._1, "") + "\t" +
 						    reverseConv.getOrElse(t._2, ""))    
-					outputTest.saveAsTextFile(outputDir + "result_" + iteration + ".tst")		
+					outputTest.saveAsTextFile(outputDir + "/result_" + iteration + ".tst")		
 					val strTime = sc.parallelize(Array(classificationTime.toString), 1)
-					strTime.saveAsTextFile(outputDir + "classification_time_" + iteration)
+					strTime.saveAsTextFile(outputDir + "/classification_time_" + iteration)
 					
 					(traValuesAndPreds, tstValuesAndPreds, classificationTime)
 			}
@@ -364,7 +364,7 @@ object MultiClassificationUtils {
 				discretize match { 
 				  case Some(disc) => 
 				    val (discTrData, discTstData, discTime) = discretization(
-								disc, trData, tstData, outputDir, i, saveData=true)
+								disc, trData, tstData, outputDir, i, saveDiscretizedData = false) 
 					trData = discTrData
 					tstData = discTstData
 					taskTime = discTime
@@ -458,6 +458,6 @@ object MultiClassificationUtils {
 			
 			val sc = predictions(0)._1.context
 			val hdfsOutput = sc.parallelize(Array(output), 1)
-			hdfsOutput.saveAsTextFile(outputDir + "globalResult.txt")
+			hdfsOutput.saveAsTextFile(outputDir + "/globalResult.txt")
 		}
 }
