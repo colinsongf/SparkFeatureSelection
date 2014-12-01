@@ -355,8 +355,8 @@ object MultiClassificationUtils {
 				val testData = sc.textFile(testFile).
 						//sample(false, samplingRate, seed.nextLong).
 						map(line => (KeelParser.parseLabeledPoint(bcTypeConv, line)))
-				trainData.persist(StorageLevel.MEMORY_AND_DISK_SER) 
-				testData.persist(StorageLevel.MEMORY_AND_DISK_SER)
+				trainData.persist(StorageLevel.MEMORY_ONLY_SER) 
+				testData.persist(StorageLevel.MEMORY_ONLY_SER)
 				
 				// Discretization
 				var trData = trainData; var tstData = testData
@@ -380,7 +380,7 @@ object MultiClassificationUtils {
 					trData = fsTrainData
 					tstData = fsTestData
 					taskTime = fsTime
-				  case None => taskTime = 0.0 /* criteria not fulfilled, do not do FS */
+				  case None => taskTime = 0.0 /* criteria not fulfilled, do not do select */
 				}
 				times("FSTime") = times("FSTime") :+ taskTime
 				
