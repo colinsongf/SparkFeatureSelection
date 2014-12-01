@@ -139,8 +139,6 @@ class InfoThFeatureSelection private (
         selected.foreach({case F(feat, c) =>
         	val calcMI = IT.miAndCmi(data, _: Seq[Int], feat, Some(label), nElements)
 			val missedMiAndCmi = calcMutualInformation(calcMI, newFeatures.map(_._1), miniBatchFraction).toMap
-			val strRedundancy = missedMiAndCmi.mkString("\n")
-			println("New features Redudancy: \n" + strRedundancy)
 			newFeatures.foreach{ case (feat, crit) => 
 			  missedMiAndCmi.get(feat) match {
   				case Some((mi, cmi)) => crit.update(mi, cmi)
