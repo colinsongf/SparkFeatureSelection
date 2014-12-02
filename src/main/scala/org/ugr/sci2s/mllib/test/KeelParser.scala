@@ -25,15 +25,13 @@ object KeelParser {
   			  val values = Attributes.getAttribute(i)
   					  .getNominalValuesList()
   					  .asInstanceOf[java.util.Vector[String]]
-				  	  .asScala
-				  	  .toSeq
+				//  	  .asScala
+				 // 	  .toSeq
 			  // Transform nominal values to range [0.0, size]
-  			  conv(i) = values.zipWithIndex.toMap.mapValues(_.toDouble)
+  			  // conv(i) = values.zipWithIndex.toMap.mapValues(_.toDouble)
   			  // Transform nominal values to Integer
-			  /*val gen = for (j <- 0 until values.size) yield 
-			  		if(unityNorm) (values.get(j) -> j.toDouble / (values.size - 1))
-			    	else (values.get(j) -> j.toDouble) 
-			  conv(i) = gen.toMap*/
+			  val gen = for (j <- 0 until values.size) yield (values.get(j) -> j.toDouble) 
+			  conv(i) = gen.toMap
   		  }    	
   	  }
   	  

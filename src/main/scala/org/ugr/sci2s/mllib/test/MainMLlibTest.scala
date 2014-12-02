@@ -16,8 +16,9 @@ class MLlibRegistrator extends KryoRegistrator {
   override def registerClasses(kryo: Kryo) {
     kryo.register(classOf[Double])
     kryo.register(classOf[Array[Double]])
-    kryo.register(classOf[LabeledPoint])
-    
+    kryo.register(classOf[Byte])
+    kryo.register(classOf[Array[Byte]])
+    kryo.register(classOf[LabeledPoint])    
   }
 }
 
@@ -28,6 +29,8 @@ object MainMLlibTest {
 		val initStartTime = System.nanoTime()
 		
 		val conf = new SparkConf().setAppName("MLlibTest")
+		conf.set("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
+		conf.set("spark.kryo.registrator", "org.ugr.sci2s.mllib.test.MLlibRegistrator")
 		val sc = new SparkContext(conf)
 
 		println("Usage: MLlibTest --header-file=\"hdfs://\" (--train-file=\"hdfs://\" --test-file=\"hdfs://\" " 
