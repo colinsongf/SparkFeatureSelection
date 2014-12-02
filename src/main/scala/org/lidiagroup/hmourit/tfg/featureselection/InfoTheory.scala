@@ -23,7 +23,7 @@ object InfoTheory {
    * @return     RDD of (variable, (MI, CMI))
    */
   def miAndCmi(
-      data: RDD[Array[Double]],
+      data: RDD[Array[Byte]],
       varX: Seq[Int],
       varY: Int,
       varZ: Option[Int],
@@ -31,38 +31,30 @@ object InfoTheory {
 
     require(varX.size != 0)
 
-    //val combinations2 = data.map(d => for(x <- varX) yield ((x, d(x), d(varY), varZ match {case Some(i) => Some(d(i)) case None => None}), 1))
-    
-    // Create every combination
-    val combinations =
-      data
-      .map({ case d =>
-        ((varX.map(d(_)),
-          d(varY),
-          varZ match {case Some(i) => Some(d(i)) case None => None}),
-         1)
-      })
-      .flatMap {
-        case ((x, y, z), q) =>
-          varX.map(k => ((k, x(varX.indexOf(k)), y, z), q))
-      }
-      .reduceByKey(_ + _)
-      // Separate for each combination
-      .flatMap {
+	val combinations = data.flatMap {
+        case d =>
+          varX.map(k => ((k, 
+              d(k),
+              d(varY), 
+              varZ match {case Some(z) => Some(d(z)) case None => None}), 
+              1L))
+	}.reduceByKey(_ + _)
+	// Split each combination keeping instance keys
+    .flatMap {
         case ((k, x, y, z), q) =>
           val key_cmi = (k, x, y, Some(z))
           val key_mi = (k, x, y, None)
 
-          Seq(((k, 1 /*"xz"*/ , (x, z)),    (Seq(key_cmi), q)),
-              ((k, 2 /*"yz"*/ , (y, z)),    (Seq(key_cmi), q)),
-              ((k, 3 /*"xyz"*/, (x, y, z)), (Seq(key_cmi), q)),
-              ((k, 4 /*"z"*/  , z),         (Seq(key_cmi), q)),
-              ((k, 5 /*"xy"*/ , (x, y)),    (Seq(key_mi),  q)),
-              ((k, 6 /*"x"*/  , x),         (Seq(key_mi),  q)),
-              ((k, 7 /*"y"*/  , y),         (Seq(key_mi),  q)))
-      }
+          Seq(((k, 1:Byte /*"xz"*/ , (x, z)),    (Seq(key_cmi), q)),
+              ((k, 2:Byte /*"yz"*/ , (y, z)),    (Seq(key_cmi), q)),
+              ((k, 3:Byte /*"xyz"*/, (x, y, z)), (Seq(key_cmi), q)),
+              ((k, 4:Byte /*"z"*/  , z),         (Seq(key_cmi), q)),
+              ((k, 5:Byte /*"xy"*/ , (x, y)),    (Seq(key_mi),  q)),
+              ((k, 6:Byte /*"x"*/  , x),         (Seq(key_mi),  q)),
+              ((k, 7:Byte /*"y"*/  , y),         (Seq(key_mi),  q)))
+    }
 
-    val createCombiner: ((Int, Int)) => (Int, Int, Int, Int, Int, Int, Int) = {
+    val createCombiner: ((Byte, Long)) => (Long, Long, Long, Long, Long, Long, Long) = {
       case (1, q) => (q, 0, 0, 0, 0, 0, 0)
       case (2, q) => (0, q, 0, 0, 0, 0, 0)
       case (3, q) => (0, 0, q, 0, 0, 0, 0)
@@ -72,8 +64,8 @@ object InfoTheory {
       case (7, q) => (0, 0, 0, 0, 0, 0, q)
     }
 
-    val mergeValues: ((Int, Int, Int, Int, Int, Int, Int), (Int, Int)) => 
-        (Int, Int, Int, Int, Int, Int, Int) = {
+    val mergeValues: ((Long, Long, Long, Long, Long, Long, Long), (Byte, Long)) => 
+        (Long, Long, Long, Long, Long, Long, Long) = {
       case ((qxz, qyz, qxyz, qz, qxy, qx, qy), (ref, q)) =>
         ref match {
           case 1 => (qxz + q, qyz, qxyz, qz, qxy, qx, qy)
@@ -86,8 +78,8 @@ object InfoTheory {
         }
     }
 
-    val mergeCombiners: ((Int, Int, Int, Int, Int, Int, Int), (Int, Int, Int, Int, Int, Int, Int)) => 
-      (Int, Int, Int, Int, Int, Int, Int) = {
+    val mergeCombiners: ((Long, Long, Long, Long, Long, Long, Long), (Long, Long, Long, Long, Long, Long, Long)) => 
+      (Long, Long, Long, Long, Long, Long, Long) = {
       case ((qxz1, qyz1, qxyz1, qz1, qxy1, qx1, qy1), (qxz2, qyz2, qxyz2, qz2, qxy2, qx2, qy2)) =>
         (qxz1 + qxz2, qyz1 + qyz2, qxyz1 + qxyz2, qz1 + qz2, qxy1 + qxy2, qx1 + qx2, qy1 + qy2)
     }
@@ -102,7 +94,7 @@ object InfoTheory {
         case ((_, ref, _), (keys, q)) => for (key <- keys.distinct) yield (key, (ref, q))
       })
       // Group by origin
-      .combineByKey[(Int, Int, Int, Int, Int, Int, Int)](createCombiner, mergeValues, mergeCombiners)
+      .combineByKey[(Long, Long, Long, Long, Long, Long, Long)](createCombiner, mergeValues, mergeCombiners)
 
     grouped_frequencies.map({
       case ((k, _, _, Some(_)), (qxz, qyz, qxyz, qz, _, _, _)) =>

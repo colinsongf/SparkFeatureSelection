@@ -33,7 +33,7 @@ class InfoThFeatureSelection private (
   }
   
    private def selectFeaturesWithoutPool(
-      data: RDD[Array[Double]],
+      data: RDD[Array[Byte]],
       nToSelect: Int,
       nFeatures: Int,
       label: Int,
@@ -75,13 +75,18 @@ class InfoThFeatureSelection private (
       // select feature
       selected = F(max._1, max._2.score) +: selected
       pool = pool - max._1
+      val strSelected = selected.reverse
+    	.map({case F(f, c) => f + "\t" + "%.4f" format c})
+    	.mkString("\n")
+      println("\n*** Selected features ***\nFeature\tScore\n" + strSelected)
+      
     }
     
     selected.reverse
   }
 
   private def selectFeaturesWithPool(
-      data: RDD[Array[Double]],
+      data: RDD[Array[Byte]],
       nToSelect: Int,
       nFeatures: Int,
       label: Int,
@@ -159,29 +164,64 @@ class InfoThFeatureSelection private (
       // select feature
       selected = F(max._1, max._2.score) +: selected
       pool = pool - max._1
+      val strSelected = selected.reverse
+    	.map({case F(f, c) => f + "\t" + "%.4f" format c})
+    	.mkString("\n")
+      println("\n*** Selected features ***\nFeature\tScore\n" + strSelected)
     }
 
     selected.reverse
 
   }
+  
+  @Experimental
+  private def discreteDataToByte2(discData: RDD[LabeledPoint]): RDD[Array[Byte]] = {
+       val nFeatures = discData.first.features.size + 1
+	   val arrData = discData.map({ case LabeledPoint(label, values) => (label +: values.toArray) })
+	   val distinct = (0 until nFeatures).map(i => arrData.map(d => d(i)).distinct)
+	   
+	   // Normalize to [0, 1]
+	   val dict = (0 until nFeatures).map({i => 
+	   		require(distinct(i).count < 257)
+	   		distinct(i).collect.zipWithIndex.toMap
+	   })
+	   
+	   // Normalize to [-126, 127]
+	   arrData.map({ case d =>
+	   		(0 until nFeatures).map({i => 
+	   		  val x = dict(i).getOrElse(d(i), 0)
+	   		  ((x * 255) - 126).toByte 	   		  
+	   		}).toArray
+	   })	   
+  }
+  
+  private def discreteDataToByte(discData: RDD[LabeledPoint]): RDD[Array[Byte]] = {
+	  discData.map({ case LabeledPoint(label, values) => 
+	     (label.toByte +: values.toArray.map(_.toByte)) 
+	  })	   
+  }  
 
   def run(data: RDD[LabeledPoint], nToSelect: Int, miniBatchFraction: Float): InfoThFeatureSelectionModel = {
+    
     val nFeatures = data.first.features.size
 
     if (nToSelect > nFeatures) {
       throw new IllegalArgumentException("data doesn't have so many features")
     }
-
-    val array = data.map({ case LabeledPoint(label, values) => (label +: values.toArray) })//.cache()
-    val nElements = array.count()
+    
+    val byteData = discreteDataToByte(data).persist(StorageLevel.MEMORY_ONLY_SER)
+    //val array = data.map({ case LabeledPoint(label, values) => (label +: values.toArray) })//.cache()
+    val nElements = byteData.count()
     
     val selected = criterionFactory.getCriterion match {
       case _: InfoThCriterion with Bound if poolSize != 0 =>
-        selectFeaturesWithPool(array, nToSelect, nFeatures, 0, nElements, miniBatchFraction)
+        selectFeaturesWithPool(byteData, nToSelect, nFeatures, 0, nElements, miniBatchFraction)
       case _: InfoThCriterion =>
-        selectFeaturesWithoutPool(array, nToSelect, nFeatures, 0, nElements, miniBatchFraction)
+        selectFeaturesWithoutPool(byteData, nToSelect, nFeatures, 0, nElements, miniBatchFraction)
       case _ => Seq.empty[F]
     }
+    
+    byteData.unpersist()
     
     // Print best features according to the mRMR measure
     val strMRMR = selected.map({case F(f, c) => f + "\t" + "%.4f" format c}).mkString("\n")
