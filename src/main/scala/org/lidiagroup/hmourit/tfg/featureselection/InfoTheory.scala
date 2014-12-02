@@ -37,7 +37,7 @@ object InfoTheory {
               d(k),
               d(varY), 
               varZ match {case Some(z) => Some(d(z)) case None => None}), 
-              1L))
+              1))
 	}.reduceByKey(_ + _)
 	// Split each combination keeping instance keys
     .flatMap {
@@ -45,16 +45,16 @@ object InfoTheory {
           val key_cmi = (k, x, y, Some(z))
           val key_mi = (k, x, y, None)
 
-          Seq(((k, 1:Byte /*"xz"*/ , (x, z)),    (Seq(key_cmi), q)),
-              ((k, 2:Byte /*"yz"*/ , (y, z)),    (Seq(key_cmi), q)),
-              ((k, 3:Byte /*"xyz"*/, (x, y, z)), (Seq(key_cmi), q)),
-              ((k, 4:Byte /*"z"*/  , z),         (Seq(key_cmi), q)),
-              ((k, 5:Byte /*"xy"*/ , (x, y)),    (Seq(key_mi),  q)),
-              ((k, 6:Byte /*"x"*/  , x),         (Seq(key_mi),  q)),
-              ((k, 7:Byte /*"y"*/  , y),         (Seq(key_mi),  q)))
+          Seq(((k, 1:Byte /*"xz"*/ , (x, z)),    (Set(key_cmi), q)),
+              ((k, 2:Byte /*"yz"*/ , (y, z)),    (Set(key_cmi), q)),
+              ((k, 3:Byte /*"xyz"*/, (x, y, z)), (Set(key_cmi), q)),
+              ((k, 4:Byte /*"z"*/  , z),         (Set(key_cmi), q)),
+              ((k, 5:Byte /*"xy"*/ , (x, y)),    (Set(key_mi),  q)),
+              ((k, 6:Byte /*"x"*/  , x),         (Set(key_mi),  q)),
+              ((k, 7:Byte /*"y"*/  , y),         (Set(key_mi),  q)))
     }
 
-    val createCombiner: ((Byte, Long)) => (Long, Long, Long, Long, Long, Long, Long) = {
+    val createCombiner: ((Byte, Int)) => (Int, Int, Int, Int, Int, Int, Int) = {
       case (1, q) => (q, 0, 0, 0, 0, 0, 0)
       case (2, q) => (0, q, 0, 0, 0, 0, 0)
       case (3, q) => (0, 0, q, 0, 0, 0, 0)
@@ -64,8 +64,8 @@ object InfoTheory {
       case (7, q) => (0, 0, 0, 0, 0, 0, q)
     }
 
-    val mergeValues: ((Long, Long, Long, Long, Long, Long, Long), (Byte, Long)) => 
-        (Long, Long, Long, Long, Long, Long, Long) = {
+    val mergeValues: ((Int, Int, Int, Int, Int, Int, Int), (Byte, Int)) => 
+        (Int, Int, Int, Int, Int, Int, Int) = {
       case ((qxz, qyz, qxyz, qz, qxy, qx, qy), (ref, q)) =>
         ref match {
           case 1 => (qxz + q, qyz, qxyz, qz, qxy, qx, qy)
@@ -78,8 +78,8 @@ object InfoTheory {
         }
     }
 
-    val mergeCombiners: ((Long, Long, Long, Long, Long, Long, Long), (Long, Long, Long, Long, Long, Long, Long)) => 
-      (Long, Long, Long, Long, Long, Long, Long) = {
+    val mergeCombiners: ((Int, Int, Int, Int, Int, Int, Int), (Int, Int, Int, Int, Int, Int, Int)) => 
+      (Int, Int, Int, Int, Int, Int, Int) = {
       case ((qxz1, qyz1, qxyz1, qz1, qxy1, qx1, qy1), (qxz2, qyz2, qxyz2, qz2, qxy2, qx2, qy2)) =>
         (qxz1 + qxz2, qyz1 + qyz2, qxyz1 + qxyz2, qz1 + qz2, qxy1 + qxy2, qx1 + qx2, qy1 + qy2)
     }
@@ -91,10 +91,12 @@ object InfoTheory {
       })
       // Separate by origin of combinations
       .flatMap({
-        case ((_, ref, _), (keys, q)) => for (key <- keys.distinct) yield (key, (ref, q))
+        case ((_, ref, _), (keys, q)) => 
+          for (key <- keys) 
+            yield (key.asInstanceOf[(Int, Byte, Byte, Option[Byte])], (ref, q))
       })
       // Group by origin
-      .combineByKey[(Long, Long, Long, Long, Long, Long, Long)](createCombiner, mergeValues, mergeCombiners)
+      .combineByKey[(Int, Int, Int, Int, Int, Int, Int)](createCombiner, mergeValues, mergeCombiners)
 
     grouped_frequencies.map({
       case ((k, _, _, Some(_)), (qxz, qyz, qxyz, qz, _, _, _)) =>
