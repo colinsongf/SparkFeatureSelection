@@ -5,11 +5,12 @@ import java.util.ArrayList
 import org.apache.spark.SparkContext
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.mllib.linalg.Vectors
+import collection.JavaConverters._
 import org.apache.spark.SparkContext
 
 object KeelParser {
   
-	def parseHeaderFile (sc: SparkContext, file: String, unityNorm: Boolean = false): Array[Map[String, Double]] = {
+	def parseHeaderFile (sc: SparkContext, file: String): Array[Map[String, Double]] = {
   	  val header = sc.textFile(file)
   	  // Java code classes
   	  var arr: ArrayList[String] = new ArrayList[String]
@@ -21,13 +22,18 @@ object KeelParser {
   	  for(i <- 0 until Attributes.getNumAttributes) {
   		  conv(i) = Map()
   		  if(Attributes.getAttribute(i).getType == Attribute.NOMINAL){
-  			  val values: java.util.Vector[String] = Attributes.getAttribute(i).getNominalValuesList()
+  			  val values = Attributes.getAttribute(i)
+  					  .getNominalValuesList()
   					  .asInstanceOf[java.util.Vector[String]]
+				  	  .asScala
+				  	  .toSeq
+			  // Transform nominal values to range [0.0, size]
+  			  conv(i) = values.zipWithIndex.toMap.mapValues(_.toDouble)
   			  // Transform nominal values to Integer
-			  val gen = for (j <- 0 until values.size) yield 
+			  /*val gen = for (j <- 0 until values.size) yield 
 			  		if(unityNorm) (values.get(j) -> j.toDouble / (values.size - 1))
 			    	else (values.get(j) -> j.toDouble) 
-			  conv(i) = gen.toMap
+			  conv(i) = gen.toMap*/
   		  }    	
   	  }
   	  

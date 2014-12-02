@@ -70,8 +70,7 @@ object SVMtest {
 			val discretizer = EntropyMinimizationDiscretizer.train(train,
 					ECBDLRangeContFeatures, // continuous features 
 					10) // max number of values per feature
-		    val discData = discretizer.discretize(train)
-		    (discretizer, discData)
+		    discretizer
 		}
 		
 		def featureSelect = (data: RDD[LabeledPoint]) => {
@@ -81,8 +80,7 @@ object SVMtest {
 		      data,
 		      100) // number of features to select
 		      //0) // without pool 
-		    val reducedData = model.select(data)
-		    (model, reducedData)
+		    model
 		}
 		
 		// Output of the algorithm

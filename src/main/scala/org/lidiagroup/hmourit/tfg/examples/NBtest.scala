@@ -53,8 +53,7 @@ object NBtest {
 			val discretizer = EntropyMinimizationDiscretizer.train(train,
 					ECBDLRangeContFeatures, // continuous features 
 					10) // max number of values per feature
-		    val discData = discretizer.discretize(train)
-		    (discretizer, discData)
+		    discretizer
 		}
 		
 		def featureSelect = (data: RDD[LabeledPoint]) => {
@@ -63,9 +62,8 @@ object NBtest {
 			val model = InfoThFeatureSelection.train(criterion, 
 		      data,
 		      100) // number of features to select
-		      //0) // without pool 
-		    val reducedData = model.select(data)
-		    (model, reducedData)
+		      //0) // without pool
+		    model
 		}
 
 		

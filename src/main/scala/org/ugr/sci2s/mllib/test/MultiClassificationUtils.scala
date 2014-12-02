@@ -143,7 +143,7 @@ object MultiClassificationUtils {
 		}
 		
 		private def discretization(
-				discretize: (RDD[LabeledPoint]) => (DiscretizerModel[LabeledPoint], RDD[LabeledPoint]), 
+				discretize: (RDD[LabeledPoint]) => DiscretizerModel[LabeledPoint], 
 				train: RDD[LabeledPoint], 
 				test: RDD[LabeledPoint], 
 				outputDir: String,
@@ -168,9 +168,9 @@ object MultiClassificationUtils {
 			} catch {
 				case iie: org.apache.hadoop.mapred.InvalidInputException =>
 					val initStartTime = System.nanoTime()
-					val (discAlgorithm, discData) = discretize(train)
+					val discAlgorithm = discretize(train)
 					val discTime = (System.nanoTime() - initStartTime) / 1e9
-					val thresholds = discAlgorithm.getThresholds.toArray.sortBy(_._1)
+					val discData = discAlgorithm.discretize(train)
 					val discTestData = discAlgorithm.discretize(test)
 					
 					// Save discretized data 
@@ -189,6 +189,7 @@ object MultiClassificationUtils {
 					}
 					
 					// Save the obtained thresholds in a HDFS file (as a sequence)
+					val thresholds = discAlgorithm.getThresholds.toArray.sortBy(_._1)
 					val output = thresholds.foldLeft("")((str, elem) => str + 
 								elem._1 + "\t" + elem._2.mkString("\t") + "\n")
 					val parThresholds = sc.parallelize(Array(output), 1)
@@ -201,7 +202,7 @@ object MultiClassificationUtils {
 		}
 		
 		private def featureSelection(
-				fs: (RDD[LabeledPoint]) => (FeatureSelectionModel[LabeledPoint], RDD[LabeledPoint]), 
+				fs: (RDD[LabeledPoint]) => FeatureSelectionModel[LabeledPoint], 
 				train: RDD[LabeledPoint], 
 				test: RDD[LabeledPoint], 
 				outputDir: String,
@@ -224,17 +225,18 @@ object MultiClassificationUtils {
 			} catch {
 				case iie: org.apache.hadoop.mapred.InvalidInputException =>
   					val initStartTime = System.nanoTime()
-					val (featureSelector, reductedData) = fs(train)
+					val featureSelector = fs(train)
 					val FSTime = (System.nanoTime() - initStartTime) / 1e9
+					
+					// Save the obtained FS scheme in a HDFS file (as a sequence)					
 					val selectedAtts = featureSelector.getSelection
-					// Save the obtained FS scheme in a HDFS file (as a sequence)
 					val output = selectedAtts.mkString("\n")
 					val parFSscheme = sc.parallelize(Array(output), 1)
 					parFSscheme.saveAsTextFile(outputDir + "/FSscheme_" + iteration)
 					val strTime = sc.parallelize(Array(FSTime.toString), 1)
 					strTime.saveAsTextFile(outputDir + "/fs_time_" + iteration)
 					
-					(reductedData, featureSelector.select(test), FSTime)
+					(featureSelector.select(train), featureSelector.select(test), FSTime)
 			}
 		}
 		
@@ -305,8 +307,8 @@ object MultiClassificationUtils {
 		
 		def executeExperiment(
 		    sc: SparkContext,
-		    discretize: Option[(RDD[LabeledPoint]) => (DiscretizerModel[LabeledPoint], RDD[LabeledPoint])], 
-		    featureSelect: Option[(RDD[LabeledPoint]) => (FeatureSelectionModel[LabeledPoint], RDD[LabeledPoint])], 
+		    discretize: Option[(RDD[LabeledPoint]) => DiscretizerModel[LabeledPoint]], 
+		    featureSelect: Option[(RDD[LabeledPoint]) => FeatureSelectionModel[LabeledPoint]], 
 		    classify: Option[(RDD[LabeledPoint]) => ClassificationModel],
 		    headerFile: String, 
 		    inputData: Any, 
@@ -355,8 +357,8 @@ object MultiClassificationUtils {
 				val testData = sc.textFile(testFile).
 						//sample(false, samplingRate, seed.nextLong).
 						map(line => (KeelParser.parseLabeledPoint(bcTypeConv, line)))
-				trainData.persist(StorageLevel.MEMORY_ONLY_SER) 
-				testData.persist(StorageLevel.MEMORY_ONLY_SER)
+				//trainData.persist(StorageLevel.MEMORY_ONLY_SER) 
+				//testData.persist(StorageLevel.MEMORY_ONLY_SER)
 				
 				// Discretization
 				var trData = trainData; var tstData = testData
@@ -397,7 +399,7 @@ object MultiClassificationUtils {
 				}
 				times("ClsTime") = times("ClsTime") :+ taskTime
 				
-				trainData.unpersist(); testData.unpersist()
+				//trainData.unpersist(); testData.unpersist()
 				
 				var fullTime = (System.nanoTime() - initAllTime) / 1e9
 				times("FullTime") = times("FullTime") :+ fullTime

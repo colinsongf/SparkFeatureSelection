@@ -63,12 +63,11 @@ object MainMLlibTest {
 			val discretizer = EntropyMinimizationDiscretizer.train(train,
 					ECBDLRangeContFeatures, // continuous features 
 					nBins) // max number of values per feature
-		    val discData = discretizer.discretize(train)
-		    (discretizer, discData)
+		    discretizer
 		}
 		
 		val discretization = params.get("disc") match {
-			case Some("yes") => Some(disc)
+			case Some(s) if s matches "(?i)yes" => Some(disc)
 			case _ => None
 		}		
 		
@@ -80,20 +79,19 @@ object MainMLlibTest {
 			val model = InfoThFeatureSelection.train(criterion, 
 		      data,
 		      nToSelect, // number of features to select
-		      nPool) // number of features in pool 
-		    val reducedData = model.select(data)
-		    (model, reducedData)
+		      nPool) // number of features in pool
+		    model
 		}
 		
 		val featureSelection = params.get("fs") match {
-			case Some("yes") => Some(fs)
+			case Some(s) if s matches "(?i)yes" => Some(fs)
 			case _ => None
 		}		
 		
 		// Classification
 		val (algoInfo, classification) = params.get("classifier") match {
-		  	case Some("no") => ("", None)
-			case Some("NB") => (NBadapter.algorithmInfo(params), 
+		  	case Some(s) if s matches "(?i)no" => ("", None)
+			case Some(s) if s matches "(?i)NB" => (NBadapter.algorithmInfo(params), 
 			    		Some(NBadapter.classify(_: RDD[LabeledPoint], params)))
 			case _ => (SVMadapter.algorithmInfo(params), // Default: SVM
 			    		Some(SVMadapter.classify(_: RDD[LabeledPoint], params)))			    		
