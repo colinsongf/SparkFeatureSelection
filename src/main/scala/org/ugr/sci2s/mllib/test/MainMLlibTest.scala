@@ -78,7 +78,7 @@ object MainMLlibTest {
 		val fs = (data: RDD[LabeledPoint]) => {
 			val criterion = new InfoThCriterionFactory(params.getOrElse("fs-criterion", "mrmr"))
 			val nToSelect = MCU.toInt(params.getOrElse("fs-nfeat", "100"), 100)
-			val nPool = MCU.toInt(params.getOrElse("fs-npool", "30"), 30) // 0 w/o pool
+			val nPool = MCU.toInt(params.getOrElse("fs-npool", "30"), 30) // 0 -> w/o pool
 			val model = InfoThFeatureSelection.train(criterion, 
 		      data,
 		      nToSelect, // number of features to select

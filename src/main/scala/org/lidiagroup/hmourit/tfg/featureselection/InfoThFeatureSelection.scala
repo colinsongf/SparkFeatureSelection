@@ -78,8 +78,8 @@ class InfoThFeatureSelection private (
       selected = F(max._1, max._2.score) +: selected
       pool = pool - max._1
       val strSelected = selected.reverse
-    	.map({case F(f, c) => f + "\t" + "%.4f" format c})
-    	.mkString("\n")
+    	  .map({case F(f, c) => f + "\t" + "%.4f" format c})
+    	  .mkString("\n")
       println("\n*** Selected features ***\nFeature\tScore\n" + strSelected)
     }
     
@@ -135,7 +135,7 @@ class InfoThFeatureSelection private (
       
       // look for maximum and bound
       max = pool.maxBy(_._2.score)
-      var min = pool.minBy(_._2.score)._2.asInstanceOf[InfoThCriterion with Bound]
+      var min = pool.minBy(_._2.relevance)._2.asInstanceOf[InfoThCriterion with Bound]
       
       // increase pool if necessary
       while (max._2.score < min.bound && orderedRels.size > 0) { 
@@ -162,16 +162,17 @@ class InfoThFeatureSelection private (
         
         // look for maximum
         max = pool.maxBy(_._2.score)        
-        min = pool.minBy(_._2.score)._2.asInstanceOf[InfoThCriterion with Bound]   
+        min = pool.minBy(_._2.relevance)._2.asInstanceOf[InfoThCriterion with Bound]
       }
       
       // select feature
       selected = F(max._1, max._2.score) +: selected
       pool = pool - max._1
       val strSelected = selected.reverse
-    	.map({case F(f, c) => f + "\t" + "%.4f" format c})
-    	.mkString("\n")
+    	  .map({case F(f, c) => f + "\t" + "%.4f" format c})
+    	  .mkString("\n")
       println("\n*** Selected features ***\nFeature\tScore\n" + strSelected)
+      println("Pool size: " + pool.size)
     }
 
     selected.reverse

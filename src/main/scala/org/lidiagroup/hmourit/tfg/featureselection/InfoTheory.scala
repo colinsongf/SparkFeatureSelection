@@ -31,6 +31,8 @@ object InfoTheory {
 
     require(varX.size != 0)
     
+    
+    val none: Option[Byte] = None
     val xyComb = for(x <- varX; y <- varY) yield (x, y)
 
     val combinations = data.flatMap {
@@ -45,14 +47,14 @@ object InfoTheory {
     // Split each combination keeping instance keys
     .flatMap {
         case ((kx, ky, x, y, z), q) =>
-
+          
           Seq(((kx, ky, 1:Byte /*"xz"*/ , (x, z)),    (Set(y), q)),
               ((kx, ky, 2:Byte /*"yz"*/ , (y, z)),    (Set(x), q)),
               ((kx, ky, 3:Byte /*"xyz"*/, (x, y, z)), (Set.empty, q)),
               ((kx, ky, 4:Byte /*"z"*/  , z),         (Set((x, y)), q)),
-              ((kx, ky, 5:Byte /*"xy"*/ , (x, y)),    (Set(z),  q)),
-              ((kx, ky, 6:Byte /*"x"*/  , x),         (Set((y, z)), q)),
-              ((ky, ky, 7:Byte /*"y"*/  , y),         (Set((x, z)), q)))
+              ((kx, ky, 5:Byte /*"xy"*/ , (x, y)),    (Set.empty,  q)),
+              ((kx, ky, 6:Byte /*"x"*/  , x),         (Set(y), q)),
+              ((kx, ky, 7:Byte /*"y"*/  , y),         (Set(x), q)))
     }
 
     val createCombiner: ((Byte, Long)) => (Long, Long, Long, Long, Long, Long, Long) = {
@@ -101,23 +103,26 @@ object InfoTheory {
               val (y, z) = id.asInstanceOf[(Byte, Option[Byte])]
               for (x <- keys) yield ((kx, ky, x.asInstanceOf[Byte], y, z), (2:Byte, q))
             case 3 =>
-              for ((x, y, z) <- keys) yield ((kx, ky, x.asInstanceOf[Byte], 
-                  y.asInstanceOf[Byte], z.asInstanceOf[Option[Byte]]), (3:Byte, q))
+              val (x, y, z) = id.asInstanceOf[(Byte, Byte, Option[Byte])]
+              Seq(((kx, ky, x, y, z), (3:Byte, q)))
             case 4 =>
               val z = id.asInstanceOf[Option[Byte]]
               for ((x, y) <- keys) yield 
                 ((kx, ky, x.asInstanceOf[Byte], y.asInstanceOf[Byte], z), (4:Byte, q))
             case 5 =>
-              val (y, z) = id.asInstanceOf[(Byte, Option[Byte])]
-              for (x <- keys) yield ((kx, ky, x.asInstanceOf[Byte], y, z), (5:Byte, q))
+                val (x, y) = id.asInstanceOf[(Byte, Byte)]
+                Seq(((kx, ky, x, y, none), (5:Byte, q)))
             case 6 =>
-              val (x, z) = id.asInstanceOf[(Byte, Option[Byte])]
-              for (y <- keys) yield ((kx, ky, x, y.asInstanceOf[Byte], z), (6:Byte, q))
+              val x = id.asInstanceOf[Byte]
+              for (y <- keys) yield ((kx, ky, x, y.asInstanceOf[Byte], none), (6:Byte, q))
+            case 7 =>
+              val y = id.asInstanceOf[Byte]
+              for (x <- keys) yield ((kx, ky, x.asInstanceOf[Byte], y, none), (7:Byte, q))
           }        
       })
       // Group by origin
       .combineByKey(createCombiner, mergeValues, mergeCombiners)
-
+      
     grouped_frequencies.map({
       case ((kx, ky, _, _, Some(_)), (qxz, qyz, qxyz, qz, _, _, _)) =>
         val pz = qz.toDouble / n
@@ -127,7 +132,7 @@ object InfoTheory {
 
         ((kx, ky), (0.0, pz * pxyz * log2(pxyz / (pxz * pyz))))
 
-      case ((kx, ky, _, _, None), (qxz, qyz, qxyz, qz, qxy, qx, qy)) =>
+      case ((kx, ky, _, _, None), (_, _, _, _, qxy, qx, qy)) =>
         val pxy = qxy.toDouble / n
         val px = qx.toDouble / n
         val py = qy.toDouble / n
