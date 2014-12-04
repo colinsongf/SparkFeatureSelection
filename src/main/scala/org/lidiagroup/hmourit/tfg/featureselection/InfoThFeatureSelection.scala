@@ -49,7 +49,7 @@ class InfoThFeatureSelection private (
 	  // Print most relevant features
     val strMRMR = MiAndCmi.sortBy(-_._2._1)
     	.take(nToSelect)
-    	.map({case (f, (mi, _)) => f + "\t" + "%.4f" format mi})
+    	.map({case ((f, _), (mi, _)) => f + "\t" + "%.4f" format mi})
     	.mkString("\n")
     println("\n*** MaxRel features ***\nFeature\tScore\n" + strMRMR)
 	
@@ -138,8 +138,8 @@ class InfoThFeatureSelection private (
       var min = pool.minBy(_._2.relevance)._2.asInstanceOf[InfoThCriterion with Bound]
       
       // increase pool if necessary
-      while (max._2.score < min.bound && orderedRels.size > 0) { 
-        
+      while (max._2.score < min.bound && orderedRels.size > 0) {
+                
         val realPoolSize = math.min(poolSize, orderedRels.length)        
         val newFeatures = orderedRels.take(realPoolSize)
                 .map{ case (k, mi) => (k, criterionFactory.getCriterion.init(mi)) }
@@ -210,7 +210,7 @@ class InfoThFeatureSelection private (
     val strMRMR = selected.map({case F(f, c) => f + "\t" + "%.4f" format c}).mkString("\n")
     println("\n*** mRMR features ***\nFeature\tScore\n" + strMRMR)
 
-    new InfoThFeatureSelectionModel(selected.map({ case F(feat, rel) => feat - 1 }).toArray)
+    new InfoThFeatureSelectionModel(selected.map({ case F(feat, rel) => (feat - 1, rel) }).toArray)
   }
 }
 
@@ -229,7 +229,7 @@ object InfoThFeatureSelection {
   def train(criterionFactory: InfoThCriterionFactory,
       data: RDD[LabeledPoint],
       nToSelect: Int,
-      poolSize: Int = 30,
+      poolSize: Int = 100,
       miniBatchFraction: Float = 1.0f) = {
     new InfoThFeatureSelection(criterionFactory, poolSize).run(data, nToSelect, miniBatchFraction)
   }

@@ -4,7 +4,7 @@ import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.mllib.linalg.Vectors
 import org.apache.spark.rdd._
 
-class InfoThFeatureSelectionModel (val features: Array[Int])
+class InfoThFeatureSelectionModel (val features: Array[(Int, Double)])
     extends FeatureSelectionModel[LabeledPoint] with Serializable {
 
   /**
@@ -17,7 +17,8 @@ class InfoThFeatureSelectionModel (val features: Array[Int])
     data match {
       case LabeledPoint(label, values) =>
         val array = values.toArray
-        LabeledPoint(label, Vectors.dense(features.map(array(_))))
+        LabeledPoint(label, 
+            Vectors.dense(features.map(f => array(f._1))))
     }
   }
 
@@ -27,12 +28,7 @@ class InfoThFeatureSelectionModel (val features: Array[Int])
    * @param data RDD with elements to reduce dimensionality.
    * @return RDD with all elements reduced.
    */
-  def select(data: RDD[LabeledPoint]): RDD[LabeledPoint] = {
-    data.map({ case LabeledPoint(label, values) =>
-      val array = values.toArray
-      LabeledPoint(label, Vectors.dense(features.map(array(_))))
-    })
-  }
+  def select(data: RDD[LabeledPoint]): RDD[LabeledPoint] = { data.map(select(_)) }
   
-  override def getSelection: Array[Int] = features
+  override def getSelection: Array[(Int, Double)] = features
 }

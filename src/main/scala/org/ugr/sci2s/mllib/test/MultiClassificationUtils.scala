@@ -33,50 +33,49 @@ import org.apache.spark.mllib.regression.LabeledPoint
 object MultiClassificationUtils {
   
 	    def toInt(s: String, default: Int): Int = {
-			try {
-				s.toInt
-			} catch {
-				case e:Exception => default
-			}
+  			try {
+  				s.toInt
+  			} catch {
+  				case e:Exception => default
+  			}
 	    }	
 	
 	    def toDouble(s: String, default: Double): Double = {
-			try {
-				s.toDouble
-			} catch {
-				case e: Exception => default
-			}
-		}
+  			try {
+  				s.toDouble
+  			} catch {
+  				case e: Exception => default
+  			}
+		  }
   
   		private def parseThresholds (str: String): (Int, Seq[Double])= {
-			val tokens = str split "\t"
-			val points = tokens.slice(1, tokens.length).map(_.toDouble)
-			val attIndex = tokens(0).toInt
-			(attIndex, points.toSeq)
+  			val tokens = str split "\t"
+  			val points = tokens.slice(1, tokens.length).map(_.toDouble)
+  			val attIndex = tokens(0).toInt
+  			(attIndex, points.toSeq)
   		}
   		
   		private def parseSelectedAtts (str: String) = {
-			val tokens = str split "\t"
-			val attIndex = tokens(0).toInt
-			(attIndex)
+        val tokens = str split "\t"
+        (tokens(0).toInt, tokens(1).toDouble)
   		}
   		
   		private def parsePredictions(str: String) = {
-			val tokens = str split "\t"
-			(tokens(0).toDouble, tokens(1).toDouble)
+  			val tokens = str split "\t"
+  			(tokens(0).toDouble, tokens(1).toDouble)
   		}  		
   
   		def computePredictions(model: ClassificationModel, data: RDD[LabeledPoint], threshold: Double = .5) =
-			data.map(point => (point.label, if(model.predict(point.features) >= threshold) 1. else 0.))
+			  data.map(point => (point.label, if(model.predict(point.features) >= threshold) 1.0 else 0.0))
 
- 		def computePredictions(model: ClassificationModel, data: RDD[LabeledPoint]) =
-			data.map(point => (point.label, model.predict(point.features)))
+ 		  def computePredictions(model: ClassificationModel, data: RDD[LabeledPoint]) =
+			  data.map(point => (point.label, model.predict(point.features)))
 		
-		def computeAccuracy (valuesAndPreds: RDD[(Double, Double)]) = 
-		  valuesAndPreds.filter(r => r._1 == r._2).count.toDouble / valuesAndPreds.count
+		  def computeAccuracy (valuesAndPreds: RDD[(Double, Double)]) = 
+		    valuesAndPreds.filter(r => r._1 == r._2).count.toDouble / valuesAndPreds.count
 		  
   		def computeAccuracyLabels (valuesAndPreds: RDD[(String, String)]) = 
-		  valuesAndPreds.filter(r => r._1 == r._2).count.toDouble / valuesAndPreds.count
+		    valuesAndPreds.filter(r => r._1 == r._2).count.toDouble / valuesAndPreds.count
 		
 		private val possitive = 1
 		private val negative = 0	
@@ -119,12 +118,11 @@ object MultiClassificationUtils {
 			// return the class labels and the binary classifier derived from each one
 			val lastElem = Array((classHist.last._1, None: Option[ClassificationModel]))
 			ovaModels ++ lastElem		
-			//result.foreach(f => print(f.toString))
 		}
 		
 		@Experimental
 		private def computeOVAPredictions (ovaModels: Array[(Double, Option[ClassificationModel])], 
-		    test: RDD[LabeledPoint], threshold: Double = 1.): RDD[(Double, Double)] = {
+		    test: RDD[LabeledPoint], threshold: Double = 1.0): RDD[(Double, Double)] = {
 		  
 			def recursiveOVA (point: LabeledPoint, index: Int): Double = {
 			  val (label, model) = ovaModels(index)
@@ -230,7 +228,8 @@ object MultiClassificationUtils {
 					
 					// Save the obtained FS scheme in a HDFS file (as a sequence)					
 					val selectedAtts = featureSelector.getSelection
-					val output = selectedAtts.mkString("\n")
+					val output = selectedAtts.foldLeft("")((str, elem) => str + 
+                elem._1 + "\t" + elem._2 + "\n")
 					val parFSscheme = sc.parallelize(Array(output), 1)
 					parFSscheme.saveAsTextFile(outputDir + "/FSscheme_" + iteration)
 					val strTime = sc.parallelize(Array(FSTime.toString), 1)
@@ -247,7 +246,6 @@ object MultiClassificationUtils {
 				outputDir: String,
 				typeConv: Array[Map[String, Double]],
 				iteration: Int) = {
-		  
 		  	
 			val sc = train.context
 		  	/** Check if the results for this fold are already written in disk
@@ -442,7 +440,6 @@ object MultiClassificationUtils {
 					
 			// Confusion Matrix		
 			val str = typeConv.last.mkString("\n")
-			println("Conversor: " + str)
 			val aggTstConfMatrix = ConfusionMatrix.apply(predictions.map(_._2).reduceLeft(_ ++ _), 
 			    typeConv.last)			    
 		    output += "Test Confusion Matrix\n" + aggTstConfMatrix.toString

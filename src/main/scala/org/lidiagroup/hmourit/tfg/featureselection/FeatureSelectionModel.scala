@@ -24,5 +24,10 @@ trait FeatureSelectionModel[T] extends Serializable{
    */
   def select(data: T): T
   
-  def getSelection: Array[Int]
+  /**
+   * Get the current feature selection set and their scores.
+   *
+   * @return Index and score for each selected feature.
+   */
+  def getSelection: Array[(Int, Double)]
 }
