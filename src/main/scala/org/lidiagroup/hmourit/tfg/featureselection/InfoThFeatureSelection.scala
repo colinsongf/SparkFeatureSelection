@@ -78,8 +78,8 @@ class InfoThFeatureSelection private (
       selected = F(max._1, max._2.score) +: selected
       pool = pool - max._1
       val strSelected = selected.reverse
-    	  .map({case F(f, c) => f + "\t" + "%.4f" format c})
-    	  .mkString("\n")
+    	    .map({case F(f, c) => f + "\t" + "%.4f" format c})
+    	    .mkString("\n")
       println("\n*** Selected features ***\nFeature\tScore\n" + strSelected)
     }
     
@@ -123,14 +123,14 @@ class InfoThFeatureSelection private (
 
       // update pool
       val calcMI = IT.miAndCmi(data, _: Seq[Int], Seq(selected.head.feat), Some(label), nElements)
-	  val newMiAndCmi = calcMutualInformation(calcMI, pool.keys.toSeq, miniBatchFraction)
-        .map({ case ((x, _), crit) => (x, crit) })
-        .toMap
+	    val newMiAndCmi = calcMutualInformation(calcMI, pool.keys.toSeq, miniBatchFraction)
+            .map({ case ((x, _), crit) => (x, crit) })
+            .toMap
       pool.foreach({ case (k, crit) =>
-        newMiAndCmi.get(k) match {
-          case Some((mi, cmi)) => crit.update(mi, cmi)
-          case None => 
-        }
+          newMiAndCmi.get(k) match {
+            case Some((mi, cmi)) => crit.update(mi, cmi)
+            case None => 
+          }
       })
       
       // look for maximum and bound
@@ -163,14 +163,15 @@ class InfoThFeatureSelection private (
         // look for maximum
         max = pool.maxBy(_._2.score)        
         min = pool.minBy(_._2.relevance)._2.asInstanceOf[InfoThCriterion with Bound]
+        println("Pool size: " + pool.size)
       }
       
       // select feature
       selected = F(max._1, max._2.score) +: selected
       pool = pool - max._1
       val strSelected = selected.reverse
-    	  .map({case F(f, c) => f + "\t" + "%.4f" format c})
-    	  .mkString("\n")
+    	    .map({case F(f, c) => f + "\t" + "%.4f" format c})
+    	    .mkString("\n")
       println("\n*** Selected features ***\nFeature\tScore\n" + strSelected)
       println("Pool size: " + pool.size)
     }
@@ -179,33 +180,44 @@ class InfoThFeatureSelection private (
 
   }
   
-  private def discreteDataToByte2(discData: RDD[LabeledPoint]): RDD[Array[Byte]] = {
-     val nFeatures = discData.first.features.size + 1
-	   val arrData = discData.map({ case LabeledPoint(label, values) => (label +: values.toArray) })
-	   val distinct = (0 until nFeatures).map(i => arrData.map(d => d(i)).distinct)
-	   val byteRange = Byte.MaxValue - Byte.MinValue
+  private def discreteDataToByte(discData: RDD[LabeledPoint]): RDD[Array[Byte]] = {
      
+     val nFeatures = discData.first.features.size + 1
+	   val byteRange = Byte.MaxValue - Byte.MinValue
+	   
 	   // Normalize to [0, 1]
-	   val dict = (0 until nFeatures).map({i => 
-	   		require(distinct(i).count < byteRange)
-	   		distinct(i).collect.zipWithIndex.toMap
+	   val distinctByFeature = (0 until nFeatures).map({i => 
+        val distinctValues = i match {
+          case 0 => discData.map(d => d.label).distinct
+          case _ => discData.map(d => d.features.toArray(i - 1)).distinct
+        }        
+        if(distinctValues.count < byteRange)
+            throw new IllegalArgumentException(
+                "discrete data must only have 256 distinct values")
+        
+        val distinct = distinctValues.collect        
+        if(distinct.max > Byte.MaxValue || distinct.min < Byte.MinValue)
+   		    Some(distinct.zipWithIndex.toMap)
+        else
+          None
 	   })
 	   
-	   // Normalize to [-128, 127]
-	   arrData.map({ case d =>
+	   // Normalize to byte range in scala: [-128, 127]
+	   discData.map({ case d =>
 	   		(0 until nFeatures).map({i => 
-	   		  val x = dict(i).getOrElse(d(i), 0)
-          (Byte.MinValue + x * byteRange / (dict(i).size - 1))
-          .toByte
+          distinctByFeature(i) match {
+            case Some(distinct) if i > 0 =>
+              val x = distinct.getOrElse(d.features.toArray(i - 1), 0)
+              (Byte.MinValue + x * byteRange / (distinctByFeature(i).size - 1)).toByte
+            case Some(distinct) if i == 0 =>  
+              val x = distinct.getOrElse(d.label, 0)
+              (Byte.MinValue + x * byteRange / (distinctByFeature(i).size - 1)).toByte
+            case None if i > 0 => d.features.toArray(i - 1).toByte
+            case None if i == 0 => d.label.toByte
+          }
 	   		}).toArray
 	   })	   
   }
-  
-  private def discreteDataToByte(discData: RDD[LabeledPoint]): RDD[Array[Byte]] = {
-	  discData.map({ case LabeledPoint(label, values) => 
-	     (label.toByte +: values.toArray.map(_.toByte)) 
-	  })	   
-  }  
 
   def run(data: RDD[LabeledPoint], nToSelect: Int, miniBatchFraction: Float): InfoThFeatureSelectionModel = {
     
@@ -216,7 +228,6 @@ class InfoThFeatureSelection private (
     }
     
     val byteData = discreteDataToByte(data).persist(StorageLevel.MEMORY_ONLY_SER)
-    //val array = data.map({ case LabeledPoint(label, values) => (label +: values.toArray) })//.cache()
     val nElements = byteData.count()
     
     val selected = criterionFactory.getCriterion match {
