@@ -29,8 +29,7 @@ object InfoTheory {
       varZ: Option[Int],
       n: Long) = {
 
-    require(varX.size != 0)
-    
+    require(varX.size > 0 && varY.size > 0)  
     
     val none: Option[Byte] = None
     val xyComb = for(x <- varX; y <- varY) yield (x, y)
