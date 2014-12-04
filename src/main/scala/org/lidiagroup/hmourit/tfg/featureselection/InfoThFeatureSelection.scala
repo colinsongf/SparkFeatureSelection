@@ -193,7 +193,6 @@ class InfoThFeatureSelection private (
     }
     
     val byteData = discreteDataToByte(data).persist(StorageLevel.MEMORY_ONLY_SER)
-    //val array = data.map({ case LabeledPoint(label, values) => (label +: values.toArray) })//.cache()
     val nElements = byteData.count()
     
     val selected = criterionFactory.getCriterion match {
