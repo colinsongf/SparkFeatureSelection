@@ -34,7 +34,7 @@ object MainMLlibTest {
 		val sc = new SparkContext(conf)
 
 		println("Usage: MLlibTest --header-file=\"hdfs://\" (--train-file=\"hdfs://\" --test-file=\"hdfs://\" " 
-		    + "| --data-dir=\"hdfs://\") --output-dir=\"hdfs:\\ --disc=yes [--disc-nbis=10] --fs=yes [--fs-crit=mrmr "
+		    + "| --data-dir=\"hdfs://\") --output-dir=\"hdfs:\\ --disc=yes [--disc-nbis=10] --fs=yes [--fs-criterion=mrmr "
 		    + "--fs-nfeat=100 --fs-npool=30] --classifier=no|SVM|NB [--cls-lambda=1.0 --cls-numIter=1 --cls-stepSize = 1.0"
 		    + "--cls-regParam=1.0 --cls-miniBatchFraction=1.0]")
 		    
@@ -63,6 +63,11 @@ object MainMLlibTest {
 			val ECBDLRangeContFeatures = (0 to 2) ++ (21 to 38) ++ (93 to 130) ++ (151 to 630)
 			val irisRangeContFeatures = 0 to 3
 			val nBins = MCU.toInt(params.getOrElse("disc-nbins", "10"), 10)
+			
+			println("*** Discretization method: Fayyad discretizer (MDLP)")
+			println("*** Features to discretize: " + ECBDLRangeContFeatures.mkString(","))
+			println("*** Number of bins: " + nBins)			
+			
 			val discretizer = EntropyMinimizationDiscretizer.train(train,
 					ECBDLRangeContFeatures, // continuous features 
 					nBins) // max number of values per feature
@@ -79,6 +84,10 @@ object MainMLlibTest {
 			val criterion = new InfoThCriterionFactory(params.getOrElse("fs-criterion", "mrmr"))
 			val nToSelect = MCU.toInt(params.getOrElse("fs-nfeat", "100"), 100)
 			val nPool = MCU.toInt(params.getOrElse("fs-npool", "100"), 100) // 0 -> w/o pool
+			println("*** FS criterion: " + criterion.toString)
+			println("*** Number of features to select: " + nToSelect)
+			println("*** Pool size: " + nPool)
+			
 			val model = InfoThFeatureSelection.train(criterion, 
 		      data,
 		      nToSelect, // number of features to select
@@ -99,6 +108,8 @@ object MainMLlibTest {
 			case _ => (SVMadapter.algorithmInfo(params), // Default: SVM
 			    		Some(SVMadapter.classify(_: RDD[LabeledPoint], params)))			    		
 		}
+		
+		println("*** Classification info:" + algoInfo)
 				
 		// Extract data files
 		val dataFiles = params.get("data-dir") match {
@@ -112,7 +123,7 @@ object MainMLlibTest {
 					  System.err.println("Bad usage. Either train or test file is missing.")
 					  System.exit(-1)
 			  }
-		}		
+		}
 		
 		// Perform the experiment
 		MCU.executeExperiment(sc, discretization, featureSelection, classification,
