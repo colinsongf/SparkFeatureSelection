@@ -5,18 +5,29 @@ import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.SparkContext._
 import org.lidiagroup.hmourit.tfg.featureselection.{InfoTheory => IT}
 import org.apache.spark.storage.StorageLevel
-import org.apache.spark.annotation.Experimental
-import scala.collection.mutable.ArrayBuffer
 
+/**
+ * Train a info-theory feature selection model according to a criterion.
+ * @param criterionFactory Factory to create info-theory measurements for each feature.
+ * @param poolSize In case of using pool optimization, it indicates pool increments.
+ */
 class InfoThFeatureSelection private (
     val criterionFactory: InfoThCriterionFactory,
     var poolSize:  Int = 30)
   extends Serializable {
 
   private type Pool = RDD[(Int, InfoThCriterion)]
-  private case class F(feat: Int, crit: Double)
+  protected case class F(feat: Int, crit: Double)
   
-  def calcMutualInformation(
+  /**
+   * Wrapper method to calculate mutual information (MI) and conditional mutual information (CMI) 
+   * on several X variables with the capability of splitting the calculations into several chunks.
+   * @param applyMI Partial function that calculates MI and CMI on a subset of variables
+   * @param X variables to subset
+   * @param miniBatchFraction Percentage of simultaneous features to calculate MI and CMI (just in case).
+   * @return MI and CMI results for each X variable
+   */
+  protected def calcMutualInformation(
        applyMI: Seq[Int] => scala.collection.Map[(Int, Int),(Double, Double)], 
        varX: Seq[Int], 
        miniBatchFraction: Float) = {
@@ -27,20 +38,30 @@ class InfoThFeatureSelection private (
 	  resultsByWindow.reduce(_ ++ _)	  
   }
 
+  
   def setPoolSize(poolSize: Int) = {
     this.poolSize = poolSize
     this
   }
   
-   private def selectFeaturesWithoutPool(
+  /**
+   * Method that trains a info-theory selection model without using pool optimization.
+   * @param data Data points represented by a byte array (first element is the class attribute).
+   * @param nToSelect Number of features to select.
+   * @param nElements Number of instances.
+   * @param miniBatchFraction Fraction of data to be used in each iteration (just in case).
+   * @return A list with the most relevant features and its scores
+   */
+   protected def selectFeaturesWithoutPool(
       data: RDD[Array[Byte]],
       nToSelect: Int,
-      nFeatures: Int,
-      label: Int,
       nElements: Long,
       miniBatchFraction: Float)
     : Seq[F] = {            
 
+    val nFeatures = data.first.size - 1
+    val label = 0
+    
     // calculate relevance
     val calcMI = IT.miAndCmi(data, _: Seq[Int], Seq(label), None, nElements)
     val MiAndCmi = calcMutualInformation(calcMI, 1 to nFeatures, miniBatchFraction)
@@ -86,15 +107,24 @@ class InfoThFeatureSelection private (
     selected.reverse
   }
 
-  private def selectFeaturesWithPool(
+ /**
+   * Method that trains a info-theory selection model using pool optimization.
+   * @param data Data points represented by a byte array (first element is the class attribute).
+   * @param nToSelect Number of features to select.
+   * @param nElements Number of instances.
+   * @param miniBatchFraction Fraction of data to be used in each iteration (just in case).
+   * @return A list with the most relevant features and its scores
+   */
+  protected def selectFeaturesWithPool(
       data: RDD[Array[Byte]],
       nToSelect: Int,
-      nFeatures: Int,
-      label: Int,
       nElements: Long, 
       miniBatchFraction: Float)
     : Seq[F] = {
-
+    
+    val nFeatures = data.first.size - 1
+    val label = 0
+    
     // calculate relevance
     val calcMI = IT.miAndCmi(data, _: Seq[Int], Seq(label), None, nElements)
     var orderedRels = calcMutualInformation(calcMI, 1 to nFeatures, miniBatchFraction)
@@ -178,17 +208,29 @@ class InfoThFeatureSelection private (
     selected.reverse
   }
   
+  /**
+   * Transform discrete labeled input data in byte array data.
+   * 
+   * @param discData RDD of LabeledPoint. 
+   * @return RDD of byte array
+   * 
+   * Note: LabeledPoint must be integer values in double representation 
+   * with a maximum range value of 256. In this manner, data can be transformed
+   * to byte directly. 
+   */
   private def discreteDataToByte(discData: RDD[LabeledPoint]): RDD[Array[Byte]] = {
 	  discData.map({ case LabeledPoint(label, values) => 
 	     (label.toByte +: values.toArray.map(_.toByte))
 	  })	   
   }  
-
-  def run(data: RDD[LabeledPoint], nToSelect: Int, miniBatchFraction: Float): InfoThFeatureSelectionModel = {
+  
+  protected def run(
+      data: RDD[LabeledPoint], 
+      nToSelect: Int, 
+      miniBatchFraction: Float): 
+        InfoThFeatureSelectionModel = {
     
-    val nFeatures = data.first.features.size
-
-    if (nToSelect > nFeatures) {
+    if (nToSelect > data.first.features.size) {
       throw new IllegalArgumentException("data doesn't have so many features")
     }
     
@@ -197,9 +239,9 @@ class InfoThFeatureSelection private (
     
     val selected = criterionFactory.getCriterion match {
       case _: InfoThCriterion with Bound if poolSize != 0 =>
-        selectFeaturesWithPool(byteData, nToSelect, nFeatures, 0, nElements, miniBatchFraction)
+        selectFeaturesWithPool(byteData, nToSelect, nElements, miniBatchFraction)
       case _: InfoThCriterion =>
-        selectFeaturesWithoutPool(byteData, nToSelect, nFeatures, 0, nElements, miniBatchFraction)
+        selectFeaturesWithoutPool(byteData, nToSelect, nElements, miniBatchFraction)
       case _ => Seq.empty[F]
     }
     
@@ -216,14 +258,17 @@ class InfoThFeatureSelection private (
 object InfoThFeatureSelection {
 
   /**
-   * Train a feature selection model according to a given criterion and return a feature selection subset
-   * of the whole feature set of the data.
+   * Train a feature selection model according to a given criterion and return a feature selection subset of the data.
    *
-   * @param   data RDD of discrete data (number of distinct values per feature must be less than 256)
+   * @param   data RDD of LabeledPoint (discrete data with a maximum range of 256).
    * @param   nToSelect maximum number of features to select
-   * @param   poolSize number of features used in a reduced pool in order to alleviate calculations
-   * @param   miniBatchFraction Percentage of features to calculate MI at the same time (just in case)
+   * @param   poolSize number of features to be used in pool optimization in order to alleviate calculations.
+   * @param   miniBatchFraction Percentage of simultaneous features to calculate MI and CMI (just in case).
    * @return  InfoThFeatureSelectionModel a feature selection model which contains a subset of selected features
+   * 
+   * Note: LabeledPoint data must be integer values in double representation 
+   * with a maximum range value of 256. In this manner, data can be transformed
+   * to byte directly. 
    */
   def train(criterionFactory: InfoThCriterionFactory,
       data: RDD[LabeledPoint],

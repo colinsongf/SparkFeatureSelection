@@ -8,29 +8,16 @@ import org.apache.spark.mllib.util.ConfusionMatrix
 import org.apache.spark.annotation.Experimental
 import org.apache.spark.SparkContext
 import scala.util.Random
-import org.lidiagroup.hmourit.tfg.discretization.EntropyMinimizationDiscretizer
-import org.lidiagroup.hmourit.tfg.featureselection.InfoThCriterionFactory
-import org.lidiagroup.hmourit.tfg.featureselection.InfoThFeatureSelection
+import org.lidiagroup.hmourit.tfg._
 import scala.collection.immutable.List
-import scala.collection.mutable.LinkedList
-import org.lidiagroup.hmourit.tfg.discretization.EntropyMinimizationDiscretizerModel
-import org.lidiagroup.hmourit.tfg.featureselection.InfoThFeatureSelectionModel
-import org.lidiagroup.hmourit.tfg.discretization.DiscretizerModel
-import org.lidiagroup.hmourit.tfg.featureselection.FeatureSelectionModel
-import org.apache.spark.mllib.regression.LabeledPoint
-import org.apache.spark.mllib.regression.LabeledPoint
+import org.lidiagroup.hmourit.tfg.discretization._
+import org.lidiagroup.hmourit.tfg.featureselection._
 import org.apache.spark.mllib.linalg.Vectors
 import org.apache.hadoop.mapreduce.lib.input.InvalidInputException
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.storage.StorageLevel
-import org.apache.spark.mllib.regression.LabeledPoint
-import org.apache.spark.mllib.regression.LabeledPoint
-import org.apache.spark.rdd.EmptyRDD
-import org.apache.spark.mllib.util.ConfusionMatrixWithDict
-import org.apache.spark.mllib.util.ConfusionMatrixWithDict
-import org.apache.spark.mllib.regression.LabeledPoint
 
-object MultiClassificationUtils {
+object MLExperimentUtils {
   
 	    def toInt(s: String, default: Int): Int = {
   			try {
@@ -68,7 +55,7 @@ object MultiClassificationUtils {
   		def computePredictions(model: ClassificationModel, data: RDD[LabeledPoint], threshold: Double = .5) =
 			  data.map(point => (point.label, if(model.predict(point.features) >= threshold) 1.0 else 0.0))
 
- 		  def computePredictions(model: ClassificationModel, data: RDD[LabeledPoint]) =
+ 		  def computePredictions (model: ClassificationModel, data: RDD[LabeledPoint]) =
 			  data.map(point => (point.label, model.predict(point.features)))
 		
 		  def computeAccuracy (valuesAndPreds: RDD[(Double, Double)]) = 
@@ -77,7 +64,7 @@ object MultiClassificationUtils {
   		def computeAccuracyLabels (valuesAndPreds: RDD[(String, String)]) = 
 		    valuesAndPreds.filter(r => r._1 == r._2).count.toDouble / valuesAndPreds.count
 		
-		private val possitive = 1
+		private val positive = 1
 		private val negative = 0	
 		
 		private def calcAggStatistics = (scores: Seq[Double]) => {
@@ -102,7 +89,7 @@ object MultiClassificationUtils {
 			val classHist = data.map(point => (point.label, 1L)).reduceByKey(_ + _).collect.sortBy(_._2)
 				
 			def toBinary = (point: LabeledPoint, label: Double) => {
-				val cls = if (point.label == label) possitive else negative
+				val cls = if (point.label == label) positive else negative
 				new LabeledPoint(cls, point.features)
 			}
 			
@@ -128,7 +115,7 @@ object MultiClassificationUtils {
 			  val (label, model) = ovaModels(index)
 			  model match {
 			  	case Some(m: ClassificationModel) =>
-			  	  	val prediction = if(m.predict(point.features) >= threshold) possitive else negative
+			  	  	val prediction = if(m.predict(point.features) >= threshold) positive else negative
 			  	  	if (prediction == negative) recursiveOVA(point, index + 1) else label
 			  	case None => ovaModels.last._1
 			  }
@@ -146,7 +133,7 @@ object MultiClassificationUtils {
 				test: RDD[LabeledPoint], 
 				outputDir: String,
 				iteration: Int,
-				saveDiscretizedData: Boolean = false) = {
+				saveData: Boolean = false) = {
 		  
 			val sc = train.context
 		  	/** Check if the results for this fold are already written in disk
@@ -172,7 +159,7 @@ object MultiClassificationUtils {
 					val discTestData = discAlgorithm.discretize(test)
 					
 					// Save discretized data 
-					if(saveDiscretizedData) {
+					if(saveData) {
  						val strTrainDisc = discData.map({case LabeledPoint(label, features) => 
 							features.toArray.map(_.toInt).mkString(",") + "," + label.toInt
 						})
@@ -204,7 +191,8 @@ object MultiClassificationUtils {
 				train: RDD[LabeledPoint], 
 				test: RDD[LabeledPoint], 
 				outputDir: String,
-				iteration: Int) = {
+				iteration: Int,
+        saveData: Boolean) = {
 		  
 			val sc = train.context
 		  	/** Check if the results for this fold are already written in disk
@@ -222,9 +210,27 @@ object MultiClassificationUtils {
 				(featureSelector.select(train), featureSelector.select(test), FSTime)
 			} catch {
 				case iie: org.apache.hadoop.mapred.InvalidInputException =>
-  					val initStartTime = System.nanoTime()
+					val initStartTime = System.nanoTime()
 					val featureSelector = fs(train)
 					val FSTime = (System.nanoTime() - initStartTime) / 1e9
+          val redTrain = featureSelector.select(train)
+          val redTest = featureSelector.select(test)
+          
+          
+          // Save reduced data 
+          if(saveData) {
+            val strTrain = redTrain.map({case LabeledPoint(label, features) => 
+              features.toArray.mkString(",") + "," + label
+            })
+            
+            strTrain.saveAsTextFile(outputDir + "/fs_train_" + iteration + ".csv")
+            
+            val strTst = redTest.map({case LabeledPoint(label, features) => 
+              features.toArray.mkString(",") + "," + label
+            })
+            
+            strTst.saveAsTextFile(outputDir + "/fs_tst_" + iteration + ".csv")            
+          }
 					
 					// Save the obtained FS scheme in a HDFS file (as a sequence)					
 					val selectedAtts = featureSelector.getSelection
@@ -293,20 +299,18 @@ object MultiClassificationUtils {
 		/**
 		 * Execute a MLlib experiment with three optional phases (discretization, feature selection and classification)
 		 * @param sc Spark context
-		 * @param kfold Number of folds in which is divided the dataset
 		 * @param discretize Optional function to discretize a dataset
 		 * @param featureSelect Optional function to reduce the set of features
 		 * @param classify Optional function to classify a dataset
 		 * @param headerFile Header file with the basis information about the dataset (arff format)
-		 * @param inputData File name or data directory where the data files are placed
-		 * @param outputDir HDFS directory for the experiment output
-		 * @param algoInfo Some basis information to be written
-		 */
-		
+		 * @param inputData File or directory path where the data set files are placed
+		 * @param outputDir HDFS output directory for the experiment
+		 * @param algoInfo Some basis information about the algorithm to be executed
+		 */		
 		def executeExperiment(
 		    sc: SparkContext,
-		    discretize: Option[(RDD[LabeledPoint]) => DiscretizerModel[LabeledPoint]], 
-		    featureSelect: Option[(RDD[LabeledPoint]) => FeatureSelectionModel[LabeledPoint]], 
+		    discretize: (Option[(RDD[LabeledPoint]) => DiscretizerModel[LabeledPoint]], Boolean), 
+		    featureSelect: (Option[(RDD[LabeledPoint]) => FeatureSelectionModel[LabeledPoint]], Boolean), 
 		    classify: Option[(RDD[LabeledPoint]) => ClassificationModel],
 		    headerFile: String, 
 		    inputData: Any, 
@@ -362,27 +366,33 @@ object MultiClassificationUtils {
 				var trData = trainData; var tstData = testData
 				var taskTime = 0.0
 				discretize match { 
-				  case Some(disc) => 
+				  case (Some(disc), b) => 
 				    val (discTrData, discTstData, discTime) = discretization(
-								disc, trData, tstData, outputDir, i, saveDiscretizedData = false) 
+								disc, trData, tstData, outputDir, i, saveData = b) 
 					trData = discTrData
 					tstData = discTstData
 					taskTime = discTime
-				  case None => /* criteria not fulfilled, do not discretize */
+				  case _ => /* criteria not fulfilled, do not discretize */
 				}				
 				times("DiscTime") = times("DiscTime") :+ taskTime
 
 				// Feature Selection
 				featureSelect match { 
-				  case Some(fs) => 
+				  case (Some(fs), b) => 
 				    val (fsTrainData, fsTestData, fsTime) = 
-				      featureSelection(fs, trData, tstData, outputDir, i)
+				      featureSelection(fs, trData, tstData, outputDir, i, saveData = b)
 					trData = fsTrainData
 					tstData = fsTestData
 					taskTime = fsTime
-				  case None => taskTime = 0.0 /* criteria not fulfilled, do not do select */
+				  case _ => taskTime = 0.0 /* criteria not fulfilled, do not do select */
 				}
 				times("FSTime") = times("FSTime") :+ taskTime
+        
+        println("Test data")
+        val first = tstData.first()
+        println(first.features.toArray.mkString(",") + "-" + first.label)
+        
+        println(tstData.map(_.label).collect.mkString("\n"))
 				
 				//Classification
 				classify match { 

@@ -73,13 +73,14 @@ class ConfusionMatrixImpl(val dataAndPreds: RDD[(Double, Double)])
         lhs(key) = (rcount + lcount)
       }
       lhs
-    })
-    val labelIndexMap = (dataAndPreds.map(_._1).distinct.collect 
-        ++ dataAndPreds.map(_._2).distinct.collect)
+    })    
+    
+    val labelIndexMap = (dataAndPreds.map(_._1).distinct.collect ++ dataAndPreds.map(_._2).distinct.collect)
         .toSet
-    	.zipWithIndex
-    	.toMap
-  	print(labelIndexMap.toString)
+        .toArray
+        .sorted
+    	  .zipWithIndex
+    	  .toMap
   	var innerMatrix = DoubleMatrix.zeros(labelIndexMap.size, labelIndexMap.size)
   
   	result.foreach {
@@ -290,7 +291,7 @@ class ConfusionMatrixWithDictImpl(val data: RDD[(Double, Double)], val dict: Map
   def accuracy: Double = doubleConfusionMatrix.accuracy
 
     override def toString: String = {
-    val sb = new StringBuffer();
+    val sb = new StringBuffer()
     val maxLabelLength = dict.map(_._1.toString.length()).max
     sb.append("Confusion Matrix, row=true, column=predicted  accuracy=" + accuracy + "\n")
     val maxValueLength = doubleConfusionMatrix.innerMatrix.max().toString.length()
@@ -299,7 +300,7 @@ class ConfusionMatrixWithDictImpl(val data: RDD[(Double, Double)], val dict: Map
     def format(value: String) = String.format("%1$-" + cellLength + "s\t", value)
     
     sb.append(format(""))
-    dict.foreach(e=>{
+    dict.foreach(e => {
       sb.append(format(e._1.toString))
     })
     sb.append("\n")

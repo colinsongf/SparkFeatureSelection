@@ -15,7 +15,7 @@ object KeelParser {
   	  // Java code classes
   	  var arr: ArrayList[String] = new ArrayList[String]
   	  // Important to collect and work with arrays instead of RDD's
-  	  for(x <- header.toArray) arr.add(x)
+  	  for(x <- header.collect()) arr.add(x)
   	  new InstanceSet().parseHeaderFromString(arr, true)
   	  
   	  val conv = new Array[Map[String, Double]](Attributes.getNumAttributes)

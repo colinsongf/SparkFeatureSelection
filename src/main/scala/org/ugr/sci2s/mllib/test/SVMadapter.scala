@@ -5,7 +5,7 @@ import org.apache.spark.mllib.classification.SVMWithSGD
 import org.apache.spark.mllib.classification.SVMModel
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.mllib.evaluation.BinaryClassificationMetrics
-import org.ugr.sci2s.mllib.test.{MultiClassificationUtils => MCU}
+import org.ugr.sci2s.mllib.test.{MLExperimentUtils => MLEU}
 import org.apache.spark.mllib.classification.ClassificationModel
 
 object SVMadapter extends ClassifierAdapter {
@@ -44,10 +44,10 @@ object SVMadapter extends ClassifierAdapter {
 	}
   
 	def classify (train: RDD[LabeledPoint], parameters: Map[String, String]): ClassificationModel = {
-  		val numIter = MCU.toInt(parameters.getOrElse("cls-numIter", "1"), 1) // default: 100 
-		val stepSize = MCU.toDouble(parameters.getOrElse("cls-stepSize", "1.0"), 1.0)
-		val regParam = MCU.toDouble(parameters.getOrElse("cls-regParam", "1.0"), 1.0)
-		val miniBatchFraction = MCU.toDouble(parameters.getOrElse("cls-miniBatchFraction", "1.0"), 1.0)
+  		val numIter = MLEU.toInt(parameters.getOrElse("cls-numIter", "1"), 1) // default: 100 
+		val stepSize = MLEU.toDouble(parameters.getOrElse("cls-stepSize", "1.0"), 1.0)
+		val regParam = MLEU.toDouble(parameters.getOrElse("cls-regParam", "1.0"), 1.0)
+		val miniBatchFraction = MLEU.toDouble(parameters.getOrElse("cls-miniBatchFraction", "1.0"), 1.0)
 		val model = SVMWithSGD.train(train, numIter, stepSize, regParam, miniBatchFraction)
 		calcThreshold(model, train)
 		model

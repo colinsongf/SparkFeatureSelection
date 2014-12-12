@@ -3,12 +3,11 @@ package org.ugr.sci2s.mllib.test
 import org.apache.spark.mllib.classification._
 import com.esotericsoftware.kryo.Kryo
 import org.apache.spark.serializer.KryoRegistrator
-import org.apache.spark.mllib.tree.configuration.Algo._
 import org.apache.spark.rdd.RDD
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.SparkConf
 import org.apache.spark.SparkContext
-import org.ugr.sci2s.mllib.test.{MultiClassificationUtils => MCU}
+import org.ugr.sci2s.mllib.test.{MLExperimentUtils => MLEU}
 import org.lidiagroup.hmourit.tfg.discretization._
 import org.lidiagroup.hmourit.tfg.featureselection._
 
@@ -62,7 +61,7 @@ object MainMLlibTest {
 		val disc = (train: RDD[LabeledPoint]) => {
 			val ECBDLRangeContFeatures = (0 to 2) ++ (21 to 38) ++ (93 to 130) ++ (151 to 630)
 			val irisRangeContFeatures = 0 to 3
-			val nBins = MCU.toInt(params.getOrElse("disc-nbins", "10"), 10)
+			val nBins = MLEU.toInt(params.getOrElse("disc-nbins", "10"), 10)
 			val discretizer = EntropyMinimizationDiscretizer.train(train,
 					ECBDLRangeContFeatures, // continuous features 
 					nBins) // max number of values per feature
@@ -70,15 +69,20 @@ object MainMLlibTest {
 		}
 		
 		val discretization = params.get("disc") match {
-			case Some(s) if s matches "(?i)yes" => Some(disc)
-			case _ => None
+			case Some(s) if s matches "(?i)yes" => 
+        params.get("save-disc") match {
+          case Some(s) if s matches "(?i)yes" => 
+            (Some(disc), true)
+          case _ => (Some(disc), false)
+        }
+			case _ => (None, false)
 		}		
 		
 		// Feature Selection
 		val fs = (data: RDD[LabeledPoint]) => {
 			val criterion = new InfoThCriterionFactory(params.getOrElse("fs-criterion", "mrmr"))
-			val nToSelect = MCU.toInt(params.getOrElse("fs-nfeat", "100"), 100)
-			val nPool = MCU.toInt(params.getOrElse("fs-npool", "100"), 100) // 0 -> w/o pool
+			val nToSelect = MLEU.toInt(params.getOrElse("fs-nfeat", "100"), 100)
+			val nPool = MLExperimentUtils.toInt(params.getOrElse("fs-npool", "100"), 100) // 0 -> w/o pool
 			val model = InfoThFeatureSelection.train(criterion, 
 		      data,
 		      nToSelect, // number of features to select
@@ -87,9 +91,14 @@ object MainMLlibTest {
 		}
 		
 		val featureSelection = params.get("fs") match {
-			case Some(s) if s matches "(?i)yes" => Some(fs)
-			case _ => None
-		}		
+      case Some(s) if s matches "(?i)yes" => 
+        params.get("save-fs") match {
+          case Some(s) if s matches "(?i)yes" => 
+            (Some(fs), true)
+          case _ => (Some(fs), false)
+        }
+      case _ => (None, false)
+    }   
 		
 		// Classification
 		val (algoInfo, classification) = params.get("classifier") match {
@@ -115,7 +124,7 @@ object MainMLlibTest {
 		}		
 		
 		// Perform the experiment
-		MCU.executeExperiment(sc, discretization, featureSelection, classification,
+		MLExperimentUtils.executeExperiment(sc, discretization, featureSelection, classification,
 					  headerFile.get, dataFiles, outputDir.get, algoInfo)
 		
 		sc.stop()

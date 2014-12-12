@@ -10,23 +10,22 @@ trait FeatureSelectionModel[T] extends Serializable{
 
   /**
    * Applies trained model to select the most relevant features of each element of the RDD.
-   *
-   * @param data RDD with elements to reduce dimensionality.
-   * @return RDD with all elements reduced.
+   * according to a criterion.
+   * @param data RDD elements to reduce.
+   * @return RDD elements projected in the new dimensional space.
    */
   def select(data: RDD[T]): RDD[T]
 
   /**
-   * Applies trained model to select the most relevant features of data.
-   *
-   * @param data Data point to be reduced.
-   * @return Data point with its dimensionality reduced.
+   * Applies trained model to select the most relevant features of data
+   * according to a criterion.
+   * @param data Data point.
+   * @return Data point projected in the new dimensional space.
    */
   def select(data: T): T
   
   /**
-   * Get the current feature selection set and their scores.
-   *
+   * Get the current feature selection set and its scores.
    * @return Index and score for each selected feature.
    */
   def getSelection: Array[(Int, Double)]

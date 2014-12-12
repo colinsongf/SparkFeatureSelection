@@ -7,29 +7,31 @@ trait InfoThCriterion extends Serializable with Ordered[InfoThCriterion] {
 
   var relevance: Double = 0.0
 
-  /**
-   * Used internally to initialize relevance value
+   /**
+    * Protected method to set the relevance.
+    * The default value is 0.0.
    */
   protected def setRelevance(relevance: Double): InfoThCriterion = {
     this.relevance = relevance
     this
   }
 
-  /**
-   * Implements ordered trait
+   /** 
+    *  Compares the score of two criterions
    */
   override def compare(that: InfoThCriterion): Int = {
     this.score.compare(that.score)
   }
 
-  /**
-   * Initializes a new criterion value from relevance value
+   /** 
+    *  Initialize a criterion with a given relevance value
    */
   def init(relevance: Double): InfoThCriterion
 
   /**
-   * Updates criterion value with mutual information of the feature with the last selected one and
-   * conditional mutual information.
+   * Updates the criterion score with new mutual information and conditional mutual information.
+   * @param mi Mutual information between the criterion and another variable.
+   * @param cmi Conditional mutual information between the criterion and another variable.
    */
   def update(mi: Double, cmi: Double): InfoThCriterion
 
@@ -41,7 +43,7 @@ trait InfoThCriterion extends Serializable with Ordered[InfoThCriterion] {
 }
 
 /**
- * Declares the method needed to define a criterion which can be bounden for optimization.
+ * A special type of criterion which can be bounden for optimization.
  */
 trait Bound extends Serializable { self: InfoThCriterion =>
 
@@ -52,7 +54,7 @@ trait Bound extends Serializable { self: InfoThCriterion =>
 }
 
 /**
- * Joint Mutual Information criterion
+ * Joint Mutual Information criterion (JMI)
  */
 class Jmi extends InfoThCriterion with Bound {
 
@@ -85,7 +87,7 @@ class Jmi extends InfoThCriterion with Bound {
 }
 
 /**
- * Minimum-Redundancy Maximum-Relevance criterion
+ * Minimum-Redundancy Maximum-Relevance criterion (mRMR)
  */
 class Mrmr extends InfoThCriterion with Bound {
 
@@ -117,7 +119,7 @@ class Mrmr extends InfoThCriterion with Bound {
 }
 
 /**
- * Conditional Mutual Information Maximization
+ * Conditional Mutual Information Maximization (CMIM)
  */
 class Cmim extends InfoThCriterion {
 
@@ -142,7 +144,7 @@ class Cmim extends InfoThCriterion {
 
 
 /**
- * Informative Fragments
+ * Informative Fragments (IF)
  */
 class If extends Cmim {
 
@@ -152,7 +154,7 @@ class If extends Cmim {
 
 
 /**
- * Interaction Capping
+ * Interaction Capping (ICAP)
  */
 class Icap extends InfoThCriterion {
 
