@@ -51,6 +51,17 @@ object MLExperimentUtils {
   			val tokens = str split "\t"
   			(tokens(0).toDouble, tokens(1).toDouble)
   		}  		
+      
+      private def saveData(
+            data: RDD[LabeledPoint],
+            outputFile: String, 
+            asInt: Boolean = false) {
+          data.map({case LabeledPoint(label, features) => 
+            if(asInt) features.toArray.mkString(",") + "," + label else  
+              features.toArray.map(_.toInt).mkString(",") + "," + label.toInt
+          })
+          .saveAsTextFile(outputFile)
+      }
   
   		def computePredictions(model: ClassificationModel, data: RDD[LabeledPoint], threshold: Double = .5) =
 			  data.map(point => (point.label, if(model.predict(point.features) >= threshold) 1.0 else 0.0))
@@ -133,7 +144,7 @@ object MLExperimentUtils {
 				test: RDD[LabeledPoint], 
 				outputDir: String,
 				iteration: Int,
-				saveData: Boolean = false) = {
+				save: Boolean = false) = {
 		  
 			val sc = train.context
 		  	/** Check if the results for this fold are already written in disk
@@ -148,7 +159,17 @@ object MLExperimentUtils {
 						.filter(!_.isEmpty())
 						.map(_.toDouble)
 						.first
-				(discAlgorithm.discretize(train), discAlgorithm.discretize(test), discTime)			
+            
+        val discData = discAlgorithm.discretize(train)
+        val discTestData = discAlgorithm.discretize(test)
+          
+        // Save discretized data 
+        if(save) {
+          saveData(discData, outputDir + "/disc_train_" + iteration + ".csv", true)
+          saveData(discTestData, outputDir + "/disc_test_" + iteration + ".csv", true)          
+        } 
+        
+				(discData, discTestData, discTime)			
 				
 			} catch {
 				case iie: org.apache.hadoop.mapred.InvalidInputException =>
@@ -157,20 +178,11 @@ object MLExperimentUtils {
 					val discTime = (System.nanoTime() - initStartTime) / 1e9
 					val discData = discAlgorithm.discretize(train)
 					val discTestData = discAlgorithm.discretize(test)
-					
+          
 					// Save discretized data 
-					if(saveData) {
- 						val strTrainDisc = discData.map({case LabeledPoint(label, features) => 
-							features.toArray.map(_.toInt).mkString(",") + "," + label.toInt
-						})
-						
-						strTrainDisc.saveAsTextFile(outputDir + "/disc_train_" + iteration + ".csv")
-						
-						val strTstDisc = discTestData.map({case LabeledPoint(label, features) => 
-							features.toArray.map(_.toInt).mkString(",") + "," + label.toInt
-						})
-						
-						strTstDisc.saveAsTextFile(outputDir + "/disc_tst_" + iteration + ".csv")						
+					if(save) {
+ 						saveData(discData, outputDir + "/disc_train_" + iteration + ".csv", true)
+						saveData(discTestData, outputDir + "/disc_test_" + iteration + ".csv", true)					
 					}
 					
 					// Save the obtained thresholds in a HDFS file (as a sequence)
@@ -192,7 +204,7 @@ object MLExperimentUtils {
 				test: RDD[LabeledPoint], 
 				outputDir: String,
 				iteration: Int,
-        saveData: Boolean) = {
+        save: Boolean) = {
 		  
 			val sc = train.context
 		  	/** Check if the results for this fold are already written in disk
@@ -207,7 +219,17 @@ object MLExperimentUtils {
 						.filter(!_.isEmpty())
 						.map(_.toDouble)
 						.first
-				(featureSelector.select(train), featureSelector.select(test), FSTime)
+         
+        val redTrain = featureSelector.select(train)
+        val redTest = featureSelector.select(test)
+        
+        // Save reduced data 
+        if(save) {
+          saveData(redTrain, outputDir + "/fs_train_" + iteration + ".csv")
+          saveData(redTest, outputDir + "/fs_test_" + iteration + ".csv")          
+        }          
+        
+				(redTrain, redTest, FSTime)
 			} catch {
 				case iie: org.apache.hadoop.mapred.InvalidInputException =>
 					val initStartTime = System.nanoTime()
@@ -216,21 +238,11 @@ object MLExperimentUtils {
           val redTrain = featureSelector.select(train)
           val redTest = featureSelector.select(test)
           
-          
           // Save reduced data 
-          if(saveData) {
-            val strTrain = redTrain.map({case LabeledPoint(label, features) => 
-              features.toArray.mkString(",") + "," + label
-            })
-            
-            strTrain.saveAsTextFile(outputDir + "/fs_train_" + iteration + ".csv")
-            
-            val strTst = redTest.map({case LabeledPoint(label, features) => 
-              features.toArray.mkString(",") + "," + label
-            })
-            
-            strTst.saveAsTextFile(outputDir + "/fs_tst_" + iteration + ".csv")            
-          }
+          if(save) {
+            saveData(redTrain, outputDir + "/fs_train_" + iteration + ".csv")
+            saveData(redTest, outputDir + "/fs_test_" + iteration + ".csv")          
+          }    
 					
 					// Save the obtained FS scheme in a HDFS file (as a sequence)					
 					val selectedAtts = featureSelector.getSelection
@@ -241,7 +253,7 @@ object MLExperimentUtils {
 					val strTime = sc.parallelize(Array(FSTime.toString), 1)
 					strTime.saveAsTextFile(outputDir + "/fs_time_" + iteration)
 					
-					(featureSelector.select(train), featureSelector.select(test), FSTime)
+					(redTrain, redTest, FSTime)
 			}
 		}
 		
@@ -368,7 +380,7 @@ object MLExperimentUtils {
 				discretize match { 
 				  case (Some(disc), b) => 
 				    val (discTrData, discTstData, discTime) = discretization(
-								disc, trData, tstData, outputDir, i, saveData = b) 
+								disc, trData, tstData, outputDir, i, save = b) 
 					trData = discTrData
 					tstData = discTstData
 					taskTime = discTime
@@ -380,7 +392,7 @@ object MLExperimentUtils {
 				featureSelect match { 
 				  case (Some(fs), b) => 
 				    val (fsTrainData, fsTestData, fsTime) = 
-				      featureSelection(fs, trData, tstData, outputDir, i, saveData = b)
+				      featureSelection(fs, trData, tstData, outputDir, i, save = b)
 					trData = fsTrainData
 					tstData = fsTestData
 					taskTime = fsTime

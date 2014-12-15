@@ -87,9 +87,9 @@ object MainMLlibTest {
 		val fs = (data: RDD[LabeledPoint]) => {
 			val criterion = new InfoThCriterionFactory(params.getOrElse("fs-criterion", "mrmr"))
 			val nToSelect = MLEU.toInt(params.getOrElse("fs-nfeat", "100"), 100)
-			val nPool = MLExperimentUtils.toInt(params.getOrElse("fs-npool", "100"), 100) // 0 -> w/o pool
+			val nPool = MLEU.toInt(params.getOrElse("fs-npool", "100"), 100) // 0 -> w/o pool
 
-			println("*** FS criterion: " + criterion.toString)
+			println("*** FS criterion: " + criterion.getCriterion.toString)
 			println("*** Number of features to select: " + nToSelect)
 			println("*** Pool size: " + nPool)
       
