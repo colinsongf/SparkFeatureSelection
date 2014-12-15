@@ -57,8 +57,8 @@ object MLExperimentUtils {
             outputFile: String, 
             asInt: Boolean = false) {
           data.map({case LabeledPoint(label, features) => 
-            if(asInt) features.toArray.mkString(",") + "," + label else  
-              features.toArray.map(_.toInt).mkString(",") + "," + label.toInt
+            if(asInt) features.toArray.map(_.toInt).mkString(",") + "," + label.toInt else 
+              features.toArray.mkString(",") + "," + label
           })
           .saveAsTextFile(outputFile)
       }
@@ -399,12 +399,6 @@ object MLExperimentUtils {
 				  case _ => taskTime = 0.0 /* criteria not fulfilled, do not do select */
 				}
 				times("FSTime") = times("FSTime") :+ taskTime
-        
-        println("Test data")
-        val first = tstData.first()
-        println(first.features.toArray.mkString(",") + "-" + first.label)
-        
-        println(tstData.map(_.label).collect.mkString("\n"))
 				
 				//Classification
 				classify match { 
