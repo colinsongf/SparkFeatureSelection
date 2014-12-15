@@ -33,9 +33,9 @@ object MainMLlibTest {
 		val sc = new SparkContext(conf)
 
 		println("Usage: MLlibTest --header-file=\"hdfs://\" (--train-file=\"hdfs://\" --test-file=\"hdfs://\" " 
-		    + "| --data-dir=\"hdfs://\") --output-dir=\"hdfs:\\ --disc=yes [--disc-nbis=10] --fs=yes [--fs-criterion=mrmr "
-		    + "--fs-nfeat=100 --fs-npool=30] --classifier=no|SVM|NB [--cls-lambda=1.0 --cls-numIter=1 --cls-stepSize = 1.0"
-		    + "--cls-regParam=1.0 --cls-miniBatchFraction=1.0]")
+		    + "| --data-dir=\"hdfs://\") --output-dir=\"hdfs:\\ --disc=yes [ --disc-nbis=10 --save-disc=yes ] --fs=yes [ --fs-criterion=mrmr "
+		    + "--fs-nfeat=100 --fs-npool=30 --save-fs=yes ] --classifier=no|SVM|NB [ --cls-lambda=1.0 --cls-numIter=1 --cls-stepSize = 1.0"
+		    + "--cls-regParam=1.0 --cls-miniBatchFraction=1.0 ]")
 		    
 		// Create a table of parameters (parsing)
 		val params = args.map({arg =>
