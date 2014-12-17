@@ -11,7 +11,7 @@ import org.apache.spark.mllib.classification.ClassificationModel
 object SVMadapter extends ClassifierAdapter {
   
 	def algorithmInfo (parameters: Map[String, String]): String = {
-  		val numIter = parameters.getOrElse("cls-numIter", "1") // default: 100 
+  		val numIter = parameters.getOrElse("cls-numIter", "100")
   		val stepSize = parameters.getOrElse("cls-stepSize", "1.0")
   		val regParam = parameters.getOrElse("cls-regParam", "1.0")
   		val miniBatchFraction = parameters.getOrElse("cls-miniBatchFraction", "1.0")
@@ -36,7 +36,7 @@ object SVMadapter extends ClassifierAdapter {
 		
 		// Get evaluation metrics.
 		val metrics = new BinaryClassificationMetrics(scoreAndLabels)
-		val measuresByThreshold = metrics.fMeasureByThreshold.toArray
+		val measuresByThreshold = metrics.fMeasureByThreshold.collect()
 		val maxThreshold = measuresByThreshold.maxBy{_._2}
 		
 		//println("Max (Threshold, Precision):" + maxThreshold)
@@ -44,7 +44,7 @@ object SVMadapter extends ClassifierAdapter {
 	}
   
 	def classify (train: RDD[LabeledPoint], parameters: Map[String, String]): ClassificationModel = {
-  		val numIter = MLEU.toInt(parameters.getOrElse("cls-numIter", "1"), 1) // default: 100 
+  	val numIter = MLEU.toInt(parameters.getOrElse("cls-numIter", "100"), 100)
 		val stepSize = MLEU.toDouble(parameters.getOrElse("cls-stepSize", "1.0"), 1.0)
 		val regParam = MLEU.toDouble(parameters.getOrElse("cls-regParam", "1.0"), 1.0)
 		val miniBatchFraction = MLEU.toDouble(parameters.getOrElse("cls-miniBatchFraction", "1.0"), 1.0)

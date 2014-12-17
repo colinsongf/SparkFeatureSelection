@@ -51,7 +51,7 @@ object KeelParser {
 		new LabeledPoint(label, Vectors.dense(features))
 	}
 	
-	def parsePoint (conv: Array[Map[String, Double]], str: String, omitLast: Boolean) = {
+	def parseDensePoint (conv: Array[Map[String, Double]], str: String, omitLast: Boolean) = {
 	  
 		val tokens = str split ","		
 		require(tokens.length == conv.length)

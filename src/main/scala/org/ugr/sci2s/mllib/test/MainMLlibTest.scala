@@ -9,7 +9,7 @@ import org.apache.spark.SparkConf
 import org.apache.spark.SparkContext
 import org.ugr.sci2s.mllib.test.{MLExperimentUtils => MLEU}
 import org.lidiagroup.hmourit.tfg.discretization._
-import org.lidiagroup.hmourit.tfg.featureselection._
+import org.apache.spark.mllib.featureselection._
 
 class MLlibRegistrator extends KryoRegistrator {
   override def registerClasses(kryo: Kryo) {
@@ -34,7 +34,7 @@ object MainMLlibTest {
 
 		println("Usage: MLlibTest --header-file=\"hdfs://\" (--train-file=\"hdfs://\" --test-file=\"hdfs://\" " 
 		    + "| --data-dir=\"hdfs://\") --output-dir=\"hdfs:\\ --disc=yes [ --disc-nbis=10 --save-disc=yes ] --fs=yes [ --fs-criterion=mrmr "
-		    + "--fs-nfeat=100 --fs-npool=30 --save-fs=yes ] --classifier=no|SVM|NB [ --cls-lambda=1.0 --cls-numIter=1 --cls-stepSize = 1.0"
+		    + "--fs-nfeat=100 --fs-npool=30 --save-fs=yes ] --file-format=LibSVM|KEEL --classifier=no|SVM|NB|LR [ --cls-lambda=1.0 --cls-numIter=1 --cls-stepSize = 1.0"
 		    + "--cls-regParam=1.0 --cls-miniBatchFraction=1.0 ]")
 		    
 		// Create a table of parameters (parsing)
@@ -113,9 +113,11 @@ object MainMLlibTest {
 		// Classification
 		val (algoInfo, classification) = params.get("classifier") match {
 		  	case Some(s) if s matches "(?i)no" => ("", None)
-			case Some(s) if s matches "(?i)NB" => (NBadapter.algorithmInfo(params), 
+			  case Some(s) if s matches "(?i)NB" => (NBadapter.algorithmInfo(params), 
 			    		Some(NBadapter.classify(_: RDD[LabeledPoint], params)))
-			case _ => (SVMadapter.algorithmInfo(params), // Default: SVM
+        case Some(s) if s matches "(?i)LR" => (LRadapter.algorithmInfo(params), 
+              Some(LRadapter.classify(_: RDD[LabeledPoint], params)))        
+			  case _ => (SVMadapter.algorithmInfo(params), // Default: SVM
 			    		Some(SVMadapter.classify(_: RDD[LabeledPoint], params)))			    		
 		}
 		
