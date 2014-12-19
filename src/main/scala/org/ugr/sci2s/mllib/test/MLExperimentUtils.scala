@@ -51,18 +51,7 @@ object MLExperimentUtils {
   		private def parsePredictions(str: String) = {
   			val tokens = str split "\t"
   			(tokens(0).toDouble, tokens(1).toDouble)
-  		}  		
-      
-      private def saveData(
-            data: RDD[LabeledPoint],
-            outputFile: String, 
-            asInt: Boolean = false) {
-          data.map({case LabeledPoint(label, features) => 
-            if(asInt) features.toArray.map(_.toInt).mkString(",") + "," + label.toInt else 
-              features.toArray.mkString(",") + "," + label
-          })
-          .saveAsTextFile(outputFile)
-      }
+  		}
   
   		def computePredictions(model: ClassificationModel, data: RDD[LabeledPoint], threshold: Double = .5) =
 			  data.map(point => (point.label, if(model.predict(point.features) >= threshold) 1.0 else 0.0))
@@ -166,8 +155,8 @@ object MLExperimentUtils {
           
         // Save discretized data 
         if(save) {
-          saveData(discData, outputDir + "/disc_train_" + iteration + ".csv", true)
-          saveData(discTestData, outputDir + "/disc_test_" + iteration + ".csv", true)          
+           discData.saveAsTextFile(outputDir + "/disc_train_" + iteration + ".csv")
+           discTestData.saveAsTextFile(outputDir + "/disc_test_" + iteration + ".csv")       
         } 
         
 				(discData, discTestData, discTime)			
@@ -180,11 +169,11 @@ object MLExperimentUtils {
 					val discData = discAlgorithm.discretize(train)
 					val discTestData = discAlgorithm.discretize(test)
           
-					// Save discretized data 
-					if(save) {
- 						saveData(discData, outputDir + "/disc_train_" + iteration + ".csv", true)
-						saveData(discTestData, outputDir + "/disc_test_" + iteration + ".csv", true)					
-					}
+          // Save discretized data 
+          if(save) {
+             discData.saveAsTextFile(outputDir + "/disc_train_" + iteration + ".csv")
+             discTestData.saveAsTextFile(outputDir + "/disc_test_" + iteration + ".csv")       
+          } 
 					
 					// Save the obtained thresholds in a HDFS file (as a sequence)
 					val thresholds = discAlgorithm.getThresholds.toArray.sortBy(_._1)
@@ -224,11 +213,11 @@ object MLExperimentUtils {
         val redTrain = featureSelector.select(train)
         val redTest = featureSelector.select(test)
         
-        // Save reduced data 
-        if(save) {
-          saveData(redTrain, outputDir + "/fs_train_" + iteration + ".csv")
-          saveData(redTest, outputDir + "/fs_test_" + iteration + ".csv")          
-        }          
+          // Save reduced data 
+          if(save) {
+            redTrain.saveAsTextFile(outputDir + "/fs_train_" + iteration + ".csv")
+            redTest.saveAsTextFile(outputDir + "/fs_test_" + iteration + ".csv")      
+          }         
         
 				(redTrain, redTest, FSTime)
 			} catch {
@@ -241,8 +230,8 @@ object MLExperimentUtils {
           
           // Save reduced data 
           if(save) {
-            saveData(redTrain, outputDir + "/fs_train_" + iteration + ".csv")
-            saveData(redTest, outputDir + "/fs_test_" + iteration + ".csv")          
+            redTrain.saveAsTextFile(outputDir + "/fs_train_" + iteration + ".csv")
+            redTest.saveAsTextFile(outputDir + "/fs_test_" + iteration + ".csv")      
           }    
 					
 					// Save the obtained FS scheme in a HDFS file (as a sequence)					
@@ -307,6 +296,9 @@ object MLExperimentUtils {
 					(traValuesAndPreds, tstValuesAndPreds, classificationTime)
 			}
 		}
+    
+    def getExperimentParams(params: Map[String, String]) {
+    }
 		
 		/**
 		 * Execute a MLlib experiment with three optional phases (discretization, feature selection and classification)
@@ -325,7 +317,7 @@ object MLExperimentUtils {
 		    featureSelect: (Option[(RDD[LabeledPoint]) => FeatureSelectionModel[LabeledPoint]], Boolean), 
 		    classify: Option[(RDD[LabeledPoint]) => ClassificationModel],
 		    headerFile: String, 
-		    inputData: Any, 
+		    inputData: (Any, String, Boolean), 
 		    outputDir: String, 
 		    algoInfo: String) {
 
@@ -336,26 +328,36 @@ object MLExperimentUtils {
 				cvdata.toArray
 			}
       
-      val (dataFiles, format) = inputData match {
-        case (dataPath: String, kfold: Int, format: String) => (getDataFiles(dataPath, kfold), format)
-        case (train: String, test: String, format: String) => (Array((train, test)), format)
+      val (dataFiles, format, dense) = inputData match {
+        case ((dataPath: String, kfold: Int), format: String, dense: Boolean) => 
+          (getDataFiles(dataPath, kfold), format, dense)
+        case ((train: String, test: String), format: String, dense: Boolean) => 
+          (Array((train, test)), format, dense)
       } 
 			
+      val samplingRate = 1.0      
 			// Load training data
 			val readFile = format match {
-          case "(?i)LibSVM" => MLUtils.loadLibSVMFile(sc, _:String)
+          case "(?i)LibSVM" => 
+            (filePath: String) => {
+              val svmData = MLUtils.loadLibSVMFile(sc, filePath)
+              val data = if(samplingRate < 1.0) svmData.sample(false, samplingRate) else svmData
+              if(dense) {
+                data.map{case LabeledPoint(label, features) => 
+                  new LabeledPoint(label, Vectors.dense(features.toArray))}
+              } else {
+                data
+              }
+            }
           case _ => 
-            //val dataInfo = sc.textFile(headerFile).collect().reduceLeft(_ + "\n" + _)
-            val typeConversion = KeelParser.parseHeaderFile(sc, headerFile) 
-            val bcTypeConv = sc.broadcast(typeConversion).value
-            sc.textFile(_: String)
-                //sample(false, samplingRate, seed.nextLong).
-                .map(line => (KeelParser.parseLabeledPoint(bcTypeConv, line)))
-      }
-					
-			//val reverseConv = typeConversion.last.map(_.swap) // for last class
-			//val binary = typeConversion.last.size < 3
-			//if(!binary) throw new IllegalArgumentException("Data class not binary...")
+           (filePath: String) => {
+              val typeConversion = KeelParser.parseHeaderFile(sc, headerFile) 
+              val bcTypeConv = sc.broadcast(typeConversion).value
+              val lines = sc.textFile(filePath: String)
+              val data = if(samplingRate < 1.0) lines.sample(false, samplingRate) else lines
+              data.map(line => (KeelParser.parseLabeledPoint(bcTypeConv, line)))              
+            }
+      }      
       
 			val info = Map[String, String]("algoInfo" -> algoInfo)
 			val times = scala.collection.mutable.Map[String, Seq[Double]] ("FullTime" -> Seq(),
