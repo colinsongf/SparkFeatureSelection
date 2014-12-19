@@ -15,9 +15,10 @@ object InfoTheory {
   
   /**
    * Calculates mutual information (MI) and conditional mutual information (CMI) simultaneously
-   * for several variables (X's) with others (Y's), conditioned by an optional variable Z.
+   * for several variables (X's) with others (Y's), conditioned by an optional variable Z. 
+   * Indexes must be disjoint.
    *
-   * @param data RDD of data containing the variables
+   * @param data RDD of data containing the variables (first element is the class attribute)
    * @param varX Indexes of variables
    * @param varY Indexes of the second variable
    * @param varZ Indexes of the conditioning values
@@ -30,23 +31,31 @@ object InfoTheory {
       varY: Seq[Int],
       varZ: Option[Int],
       n: Long,      
-      nFeatures: Int) = {
+      nFeatures: Int,
+      denseData: Boolean) = {
     
-        
+    // Pre-requisites
     require(varX.size > 0 && varY.size > 0)  
+    require(varX.intersect(varY).size == 0)
     
-    val multY = varY.length > 1
-    val firstY = varY(0)
+     varZ match {
+        case Some(z) => 
+          val seqZ = Seq(z)
+          require(varX.intersect(Seq(z)).size == 0 && 
+              varY.intersect(Seq(z)).size == 0)
+          case _ => (1 to nFeatures).diff(varX) ++ varY           
+    }
+
     val sc = data.context
-    val bMultY = sc.broadcast(multY)
-    val bFirstY = sc.broadcast(firstY)
+    val bMultY = sc.broadcast(varY.length > 1)
+    val bFirstY = sc.broadcast(varY(0))
     val bvarY = sc.broadcast(varY)
-    val bvarZ = sc.broadcast(varZ)
-    
+    val bvarZ = sc.broadcast(varZ)    
         
+    /* Pair generator for sparse data */
     def SparseGenerator(v: BV[Byte], 
         bvarX: Broadcast[Seq[Int]], 
-        isPoint: Broadcast[Int => Boolean]): 
+        bisXPoint: Broadcast[Int => Boolean]): 
           Seq[((Any, Byte, Byte, Option[Byte]), Long)] =  {
       
        val sv = v.asInstanceOf[BSV[Byte]]
@@ -58,32 +67,36 @@ object InfoTheory {
        var zval: Option[Byte] = None
        var xValues = Seq.empty[(Int, Byte)]
        var yValues = Seq.empty[(Int, Byte)] 
-     
-       for(offset <- 0 until v.activeSize) {
+       
+       for(offset <- 0 until sv.activeSize) {
          
             val index: Int = sv.indexAt(offset)
             val value: Byte = sv.valueAt(offset)
-           
-            if (isPoint.value(index)) {
-              (index, value) +: xValues
+            
+            // This X index is involved in calculation?
+            if (bisXPoint.value(index)) {
+              xValues = (index, value) +: xValues
+            // Same for a Y index
             } else if (bvarY.value.contains(index)) {
-              (index, value) +: yValues
+              yValues = (index, value) +: yValues
             } else if (withZ && index == varZ) {
               zval = Some(value)
             }
         }  
        
+       // Generate pairs using X and Y values generated before
        var pairs = Seq.empty[((Any, Byte, Byte, Option[Byte]), Long)]
        for((xind, xval) <- xValues){
          for((yind, yval) <- yValues) {
-           if(bMultY.value) ((xind, yind), xval, yval, zval, 1L) +: pairs else
-             (xind, xval, yval, zval, 1L) +: pairs
+           if(bMultY.value) pairs = (((xind, yind), xval, yval, zval), 1L) +: pairs else
+             pairs = ((xind, xval, yval, zval), 1L) +: pairs
          }
        }     
        
        pairs      
     }
     
+    /* Pair generator for dense data */
     def DenseGenerator(v: BV[Byte], 
         bvarX: Broadcast[Seq[Int]]): 
           Seq[((Any, Byte, Byte, Option[Byte]), Long)] = {
@@ -94,28 +107,36 @@ object InfoTheory {
        var pairs = Seq.empty[((Any, Byte, Byte, Option[Byte]), Long)]
        for(xind <- bvarX.value){
          for(yind <- bvarY.value) {
-           if(bMultY.value) ((xind, yind), dv(xind), dv(yind), zval, 1L) +: pairs else
-             (xind, dv(xind), dv(yind), zval, 1L) +: pairs
+           if(bMultY.value) pairs =(((xind, yind), dv(xind), dv(yind), zval), 1L) +: pairs else
+             pairs = ((xind, dv(xind), dv(yind), zval), 1L) +: pairs
          }
        }     
        
        pairs
     }
 
-    val pairsGenerator = data.first match {
-      case f: BDV[Byte] =>
+    /* Common function to generate pairs, it choose between sparse and dense fetch 
+     * (full or indexed, respectively)
+     */
+    val pairsGenerator = denseData match {
+      case true =>
         val bvarX = sc.broadcast(varX)
         DenseGenerator(_: BV[Byte], bvarX)
-      case f: BSV[Byte] => 
-        val oppVarX = (0 until nFeatures).toSeq.diff(varX)   
-        val reverseX = oppVarX.length < varX.length
-        val auxVarX = if(reverseX) oppVarX else varX
+      case false =>        
+        /* In order to alleviate the amount of X indexes used here, we choose between
+         * the whole set of X indexes and its opposite.
+         */
+        val nonSelectVars = varZ match {
+          case Some(z) => (1 to nFeatures).diff(varX) ++ varY ++ Seq(z)           
+          case _ => (1 to nFeatures).diff(varX) ++ varY           
+        }
+        val reverseX = nonSelectVars.length < varX.length
+        val auxVarX = if(reverseX) nonSelectVars.toSeq else varX
         val bauxVarX = sc.broadcast(auxVarX)
         val bisPoint = sc.broadcast(if(reverseX) !bauxVarX.value.contains(_: Int) else 
             bauxVarX.value.contains(_: Int))
         SparseGenerator(_: BV[Byte], bauxVarX, bisPoint)
     }
-
     
     val combinations = data
       .flatMap(pairsGenerator)

@@ -16,11 +16,36 @@ import breeze.linalg.convert
  */
 class InfoThFeatureSelection private (
     val criterionFactory: InfoThCriterionFactory,
-    var poolSize:  Int = 30)
+    var poolSize:  Int = 30,
+    val data: RDD[LabeledPoint])
   extends Serializable {
 
   private type Pool = RDD[(Int, InfoThCriterion)]
   protected case class F(feat: Int, crit: Double)
+    
+  
+  val (byteData, nFeatures, isDense) = data.first().features match {
+      case _: SparseVector => 
+         val bd: RDD[(BV[Byte], Int)] = data.map({ case LabeledPoint(label, values) =>
+            val sv = values.asInstanceOf[SparseVector]
+            (new BSV( 0 +: sv.indices.map(_ + 1), 
+                label.toByte +: sv.toArray.map(_.toByte), 
+                sv.size + 1), sv.indices.max)
+          })
+          (bd.map(_._1).persist(StorageLevel.MEMORY_ONLY_SER), 
+              bd.map(_._2).max, 
+              false)
+      case ffeatures: DenseVector =>
+        val bd: RDD[BV[Byte]] = data.map({ case LabeledPoint(label, values) => 
+            val sv = values.asInstanceOf[DenseVector]
+            new BDV(label.toByte +: sv.toArray.map(_.toByte))
+        })
+        (bd.persist(StorageLevel.MEMORY_ONLY_SER),
+            ffeatures.size, 
+            true)
+    }
+  
+    val nElements = byteData.count()
   
   /**
    * Wrapper method to calculate mutual information (MI) and conditional mutual information (CMI) 
@@ -58,15 +83,13 @@ class InfoThFeatureSelection private (
    protected def selectFeaturesWithoutPool(
       data: RDD[BV[Byte]],
       nToSelect: Int,
-      nElements: Long,
-      nFeatures: Int,
       miniBatchFraction: Float)
     : Seq[F] = {            
      
     val label = 0
     
     // calculate relevance
-    val calcMI = IT.miAndCmi(data, _: Seq[Int], Seq(label), None, nElements, nFeatures)
+    val calcMI = IT.miAndCmi(data, _: Seq[Int], Seq(label), None, nElements, nFeatures, isDense)
     val MiAndCmi = calcMutualInformation(calcMI, 1 to nFeatures, miniBatchFraction)
 	  var pool = MiAndCmi.map({ case ((x, y), (mi, _)) => (x, criterionFactory.getCriterion.init(mi)) }).toMap
 	
@@ -84,7 +107,7 @@ class InfoThFeatureSelection private (
 
     while (selected.size < nToSelect) {
       // update pool
-      val calcMI = IT.miAndCmi(data, _: Seq[Int], Seq(selected.head.feat), Some(label), nElements, nFeatures)
+      val calcMI = IT.miAndCmi(data, _: Seq[Int], Seq(selected.head.feat), Some(label), nElements, nFeatures, isDense)
   	  val newMiAndCmi = calcMutualInformation(calcMI, pool.keys.toSeq, miniBatchFraction)
           .map({ case ((x, _), crit) => (x, crit) })
           .toMap
@@ -121,15 +144,13 @@ class InfoThFeatureSelection private (
   protected def selectFeaturesWithPool(
       data: RDD[BV[Byte]],
       nToSelect: Int,
-      nElements: Long,
-      nFeatures: Int,
       miniBatchFraction: Float)
     : Seq[F] = {
     
     val label = 0
     
     // calculate relevance
-    val calcMI = IT.miAndCmi(data, _: Seq[Int], Seq(label), None, nElements, nFeatures)
+    val calcMI = IT.miAndCmi(data, _: Seq[Int], Seq(label), None, nElements, nFeatures, isDense)
     var orderedRels = calcMutualInformation(calcMI, 1 to nFeatures, miniBatchFraction)
     	.map({ case ((k, _), (mi, _)) => (k, mi) })
         .sortBy(-_._2)
@@ -155,7 +176,7 @@ class InfoThFeatureSelection private (
     while (selected.size < nToSelect) {
 
       // update pool
-      val calcMI = IT.miAndCmi(data, _: Seq[Int], Seq(selected.head.feat), Some(label), nElements, nFeatures)
+      val calcMI = IT.miAndCmi(data, _: Seq[Int], Seq(selected.head.feat), Some(label), nElements, nFeatures, isDense)
 	    val newMiAndCmi = calcMutualInformation(calcMI, pool.keys.toSeq, miniBatchFraction)
             .map({ case ((x, _), crit) => (x, crit) })
             .toMap
@@ -179,7 +200,7 @@ class InfoThFeatureSelection private (
                 .toMap
         
         // do missed calculations (for each previously selected attribute)
-        val calcMI = IT.miAndCmi(data, _: Seq[Int], selected.map(_.feat), Some(label), nElements, nFeatures)
+        val calcMI = IT.miAndCmi(data, _: Seq[Int], selected.map(_.feat), Some(label), nElements, nFeatures, isDense)
         val missedMiAndCmi = calcMutualInformation(calcMI, newFeatures.keys.toSeq, miniBatchFraction)
         
         missedMiAndCmi.foreach{ case ((feat, _), (mi, cmi)) => 
@@ -240,32 +261,19 @@ class InfoThFeatureSelection private (
     byteData
   }  
   
-  protected def run(
-      data: RDD[LabeledPoint], 
-      nToSelect: Int, 
+  protected def run(nToSelect: Int, 
       miniBatchFraction: Float): 
         InfoThFeatureSelectionModel = {
     
-    val first = data.first
-    val nFeatures = first.features match {
-      case _: SparseVector => 
-         val lastFeat = data.map(_.features.asInstanceOf[SparseVector].indices.max).max
-         lastFeat + 1
-      case f: DenseVector => f.size + 1
-    }
-    
     if (nToSelect > nFeatures) {
       throw new IllegalArgumentException("data doesn't have so many features")
-    }
-    
-    val byteData = discreteDataToByte(data, nFeatures).persist(StorageLevel.MEMORY_ONLY_SER)
-    val nElements = byteData.count()
+    }    
     
     val selected = criterionFactory.getCriterion match {
       case _: InfoThCriterion with Bound if poolSize != 0 =>
-        selectFeaturesWithPool(byteData, nToSelect, nElements, nFeatures, miniBatchFraction)
+        selectFeaturesWithPool(byteData, nToSelect, miniBatchFraction)
       case _: InfoThCriterion =>
-        selectFeaturesWithoutPool(byteData, nToSelect, nElements, nFeatures, miniBatchFraction)
+        selectFeaturesWithoutPool(byteData, nToSelect, miniBatchFraction)
       case _ => Seq.empty[F]
     }
     
@@ -299,6 +307,6 @@ object InfoThFeatureSelection {
       nToSelect: Int,
       poolSize: Int = 100,
       miniBatchFraction: Float = 1.0f) = {
-    new InfoThFeatureSelection(criterionFactory, poolSize).run(data, nToSelect, miniBatchFraction)
+    new InfoThFeatureSelection(criterionFactory, poolSize, data).run(nToSelect, miniBatchFraction)
   }
 }
