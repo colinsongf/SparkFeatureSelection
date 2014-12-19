@@ -297,7 +297,109 @@ object MLExperimentUtils {
 			}
 		}
     
-    def getExperimentParams(params: Map[String, String]) {
+    def getExperimentParams(params: Map[String, String]) = {
+        val outputDir = params.get("output-dir")
+    
+        // Header file and output dir must be present
+        (outputDir) match {
+          case None => 
+            System.err.println("Bad usage. Output dir is missing.")
+            System.exit(-1)
+          case _ =>
+        }
+        
+        // Discretization
+        val disc = (train: RDD[LabeledPoint]) => {
+          val ECBDLRangeContFeatures = (0 to 2) ++ (21 to 38) ++ (93 to 130) ++ (151 to 630)
+          val irisRangeContFeatures = 0 to 3
+          val nBins = this.toInt(params.getOrElse("disc-nbins", "10"), 10)
+    
+          println("*** Discretization method: Fayyad discretizer (MDLP)")
+          println("*** Features to discretize: " + ECBDLRangeContFeatures.mkString(","))
+          println("*** Number of bins: " + nBins)     
+    
+          val discretizer = EntropyMinimizationDiscretizer.train(train,
+              ECBDLRangeContFeatures, // continuous features 
+              nBins) // max number of values per feature
+            discretizer
+        }
+        
+        val discretization = params.get("disc") match {
+          case Some(s) if s matches "(?i)yes" => 
+            params.get("save-disc") match {
+              case Some(s) if s matches "(?i)yes" => 
+                (Some(disc), true)
+              case _ => (Some(disc), false)
+            }
+          case _ => (None, false)
+        }   
+        
+        // Feature Selection
+        val fs = (data: RDD[LabeledPoint]) => {
+          val criterion = new InfoThCriterionFactory(params.getOrElse("fs-criterion", "mrmr"))
+          val nToSelect = this.toInt(params.getOrElse("fs-nfeat", "100"), 100)
+          val nPool = this.toInt(params.getOrElse("fs-npool", "100"), 100) // 0 -> w/o pool
+    
+          println("*** FS criterion: " + criterion.getCriterion.toString)
+          println("*** Number of features to select: " + nToSelect)
+          println("*** Pool size: " + nPool)
+          
+          val model = InfoThFeatureSelection.train(criterion, 
+              data,
+              nToSelect, // number of features to select
+              nPool) // number of features in pool
+            model
+        }
+        
+        val featureSelection = params.get("fs") match {
+          case Some(s) if s matches "(?i)yes" => 
+            params.get("save-fs") match {
+              case Some(s) if s matches "(?i)yes" => 
+                (Some(fs), true)
+              case _ => (Some(fs), false)
+            }
+          case _ => (None, false)
+        }   
+        
+        // Classification
+        val (algoInfo, classification) = params.get("classifier") match {
+            case Some(s) if s matches "(?i)no" => ("", None)
+            case Some(s) if s matches "(?i)NB" => (NBadapter.algorithmInfo(params), 
+                  Some(NBadapter.classify(_: RDD[LabeledPoint], params)))
+            case Some(s) if s matches "(?i)LR" => (LRadapter.algorithmInfo(params), 
+                  Some(LRadapter.classify(_: RDD[LabeledPoint], params)))        
+            case _ => (SVMadapter.algorithmInfo(params), // Default: SVM
+                  Some(SVMadapter.classify(_: RDD[LabeledPoint], params)))              
+        }
+        
+        val format = params.get("--file-format") match {
+            case Some(s) if s matches "(?i)LibSVM" => s
+            case _ => "KEEL"             
+        }
+        
+        val dense = params.get("--file-format") match {
+            case Some(s) if s matches "(?i)sparse" => false
+            case _ => true             
+        }
+        
+        println("*** Classification info:" + algoInfo)
+            
+        // Extract data files    
+        val header = params.get("header-file")
+        val dataFiles = params.get("data-dir") match {
+          case Some(dataDir) => (header, dataDir)
+          case _ =>
+            val trainFile = params.get("train-file")
+            val testFile = params.get("test-file")    
+            (trainFile, testFile) match {
+              case (Some(tr), Some(tst)) => (header, tr, tst)
+              case _ => 
+                System.err.println("Bad usage. Either train or test file is missing.")
+                System.exit(-1)
+            }
+        }
+        
+        (discretization, featureSelection, classification, (dataFiles, format, dense) , outputDir.get, algoInfo)
     }
 		
 		/**
@@ -306,7 +408,6 @@ object MLExperimentUtils {
 		 * @param discretize Optional function to discretize a dataset
 		 * @param featureSelect Optional function to reduce the set of features
 		 * @param classify Optional function to classify a dataset
-		 * @param headerFile Header file with the basis information about the dataset (arff format)
 		 * @param inputData File or directory path where the data set files are placed
 		 * @param outputDir HDFS output directory for the experiment
 		 * @param algoInfo Some basis information about the algorithm to be executed
@@ -316,7 +417,6 @@ object MLExperimentUtils {
 		    discretize: (Option[(RDD[LabeledPoint]) => DiscretizerModel[LabeledPoint]], Boolean), 
 		    featureSelect: (Option[(RDD[LabeledPoint]) => FeatureSelectionModel[LabeledPoint]], Boolean), 
 		    classify: Option[(RDD[LabeledPoint]) => ClassificationModel],
-		    headerFile: String, 
 		    inputData: (Any, String, Boolean), 
 		    outputDir: String, 
 		    algoInfo: String) {
@@ -328,15 +428,15 @@ object MLExperimentUtils {
 				cvdata.toArray
 			}
       
-      val (dataFiles, format, dense) = inputData match {
-        case ((dataPath: String, kfold: Int), format: String, dense: Boolean) => 
-          (getDataFiles(dataPath, kfold), format, dense)
-        case ((train: String, test: String), format: String, dense: Boolean) => 
-          (Array((train, test)), format, dense)
+      val (headerFile, dataFiles, format, dense) = inputData match {
+        case ((header: Option[String], dataPath: String, kfold: Int), format: String, dense: Boolean) => 
+          (header, getDataFiles(dataPath, kfold), format, dense)
+        case ((header: Option[String], train: String, test: String), format: String, dense: Boolean) => 
+          (header, Array((train, test)), format, dense)
       } 
 			
       val samplingRate = 1.0      
-			// Load training data
+			// Create the function to read the labeled points
 			val readFile = format match {
           case "(?i)LibSVM" => 
             (filePath: String) => {
@@ -351,7 +451,7 @@ object MLExperimentUtils {
             }
           case _ => 
            (filePath: String) => {
-              val typeConversion = KeelParser.parseHeaderFile(sc, headerFile) 
+              val typeConversion = KeelParser.parseHeaderFile(sc, headerFile.get) 
               val bcTypeConv = sc.broadcast(typeConversion).value
               val lines = sc.textFile(filePath: String)
               val data = if(samplingRate < 1.0) lines.sample(false, samplingRate) else lines

@@ -48,13 +48,12 @@ object MainMLlibTest {
 		  	}
 		}).toMap		
 		
-		val headerFile = params.get("header-file")
 		val outputDir = params.get("output-dir")
 		
 		// Header file and output dir must be present
-		(headerFile, outputDir) match {
-			case (None, None) => 
-			  System.err.println("Bad usage. Either header file or output dir is missing.")
+		(outputDir) match {
+			case None => 
+			  System.err.println("Bad usage. Output dir is missing.")
 			  System.exit(-1)
 			case _ =>
 		}
@@ -135,23 +134,25 @@ object MainMLlibTest {
 		
 		println("*** Classification info:" + algoInfo)
 				
-		// Extract data files
+		// Extract data files    
+    val header = params.get("header-file")
 		val dataFiles = params.get("data-dir") match {
-			case Some(dataDir) => dataDir
+			case Some(dataDir) => (header, dataDir)
 			case _ =>
 			  val trainFile = params.get("train-file")
 			  val testFile = params.get("test-file")		
 			  (trainFile, testFile) match {
-					case (Some(tr), Some(tst)) => (tr, tst)
+					case (Some(tr), Some(tst)) => (header, tr, tst)
 					case _ => 
 					  System.err.println("Bad usage. Either train or test file is missing.")
 					  System.exit(-1)
 			  }
 		}
+    
 		
 		// Perform the experiment
 		MLExperimentUtils.executeExperiment(sc, discretization, featureSelection, classification,
-					  headerFile.get, (dataFiles, format, dense) , outputDir.get, algoInfo)
+					  (dataFiles, format, dense) , outputDir.get, algoInfo)
 		
 		sc.stop()
 	}
