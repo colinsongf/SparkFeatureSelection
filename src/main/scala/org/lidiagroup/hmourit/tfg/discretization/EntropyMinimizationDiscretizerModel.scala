@@ -17,15 +17,16 @@ class EntropyMinimizationDiscretizerModel (val thresholds: Map[Int, Seq[Double]]
    * @param data Data point to discretize.
    * @return Data point with values discretized
    */
-  override def discretize(data: LabeledPoint): LabeledPoint = {
+  override def discretize(data: LabeledPoint, dense: Boolean = true): LabeledPoint = {
     val newValues = data.features.toArray.zipWithIndex.map({ case (value, i) =>
-      if (this.thresholds.keySet contains i) {
-        assignDiscreteValue(value, thresholds(i))
-      } else {
-        value
-      }
+      val threshold = thresholds.get(i)
+        threshold match {
+        	case Some(th) => (i, assignDiscreteValue(value, th).toDouble)
+        	case None => (i, value)
+        }
     })
-    LabeledPoint(data.label, Vectors.dense(newValues))
+    if(dense) LabeledPoint(data.label, Vectors.dense(newValues.map(_._2).toArray)) else 
+        LabeledPoint(data.label, Vectors.sparse(newValues.size, newValues.map(_._1), newValues.map(_._2)))
   }
 
   /**
@@ -34,19 +35,20 @@ class EntropyMinimizationDiscretizerModel (val thresholds: Map[Int, Seq[Double]]
    * @param data RDD representing data points to discretize.
    * @return RDD with values discretized
    */
-  override def discretize(data: RDD[LabeledPoint]): RDD[LabeledPoint] = {
+  override def discretize(data: RDD[LabeledPoint], dense: Boolean = true): RDD[LabeledPoint] = {
     val bc_thresholds = data.context.broadcast(this.thresholds)
 
     // applies thresholds to discretize every continuous feature
     data.map({ case LabeledPoint(label, values) =>
       val newValues = values.toArray.zipWithIndex.map({ case (value, i) =>
-        if (bc_thresholds.value.keySet contains i) {
-          assignDiscreteValue(value, bc_thresholds.value(i))
-        } else {
-          value
+        val threshold = bc_thresholds.value.get(i)
+        threshold match {
+        	case Some(th) => (i, assignDiscreteValue(value, th).toDouble)
+        	case None => (i, value)
         }
       })
-      LabeledPoint(label, Vectors.dense(newValues))
+      if(dense) LabeledPoint(label, Vectors.dense(newValues.map(_._2).toArray)) else 
+        LabeledPoint(label, Vectors.sparse(newValues.size, newValues.map(_._1), newValues.map(_._2)))
     })
   }
 
