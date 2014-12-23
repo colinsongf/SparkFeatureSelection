@@ -61,7 +61,6 @@ object MainMLlibTest {
 		// Discretization
 		val disc = (train: RDD[LabeledPoint]) => {
 			val ECBDLRangeContFeatures = (0 to 2) ++ (21 to 38) ++ (93 to 130) ++ (151 to 630)
-			val irisRangeContFeatures = 0 to 3
 			val nBins = MLEU.toInt(params.getOrElse("disc-nbins", "10"), 10)
 
 			println("*** Discretization method: Fayyad discretizer (MDLP)")
@@ -69,7 +68,7 @@ object MainMLlibTest {
 			println("*** Number of bins: " + nBins)			
 
 			val discretizer = EntropyMinimizationDiscretizer.train(train,
-					ECBDLRangeContFeatures, // continuous features 
+					Some(ECBDLRangeContFeatures), // continuous features 
 					nBins) // max number of values per feature
 		    discretizer
 		}
@@ -102,52 +101,52 @@ object MainMLlibTest {
 		}
 		
 		val featureSelection = params.get("fs") match {
-      case Some(s) if s matches "(?i)yes" => 
-        params.get("save-fs") match {
-          case Some(s) if s matches "(?i)yes" => 
-            (Some(fs), true)
-          case _ => (Some(fs), false)
-        }
-      case _ => (None, false)
-    }   
+			case Some(s) if s matches "(?i)yes" => 
+	        params.get("save-fs") match {
+	          case Some(s) if s matches "(?i)yes" => 
+	            (Some(fs), true)
+	          case _ => (Some(fs), false)
+	        }
+			case _ => (None, false)
+		}   
 		
 		// Classification
 		val (algoInfo, classification) = params.get("classifier") match {
 		  	case Some(s) if s matches "(?i)no" => ("", None)
-			  case Some(s) if s matches "(?i)NB" => (NBadapter.algorithmInfo(params), 
-			    		Some(NBadapter.classify(_: RDD[LabeledPoint], params)))
-        case Some(s) if s matches "(?i)LR" => (LRadapter.algorithmInfo(params), 
-              Some(LRadapter.classify(_: RDD[LabeledPoint], params)))        
-			  case _ => (SVMadapter.algorithmInfo(params), // Default: SVM
-			    		Some(SVMadapter.classify(_: RDD[LabeledPoint], params)))			    		
+		  	case Some(s) if s matches "(?i)NB" => (NBadapter.algorithmInfo(params), 
+		  			Some(NBadapter.classify(_: RDD[LabeledPoint], params)))
+		    case Some(s) if s matches "(?i)LR" => (LRadapter.algorithmInfo(params), 
+		    		Some(LRadapter.classify(_: RDD[LabeledPoint], params)))        
+		    case _ => (SVMadapter.algorithmInfo(params), // Default: SVM
+		    		Some(SVMadapter.classify(_: RDD[LabeledPoint], params)))			    		
 		}
-    
-    val format = params.get("--file-format") match {
-        case Some(s) if s matches "(?i)LibSVM" => s
-        case _ => "KEEL"             
-    }
-    
-    val dense = params.get("--file-format") match {
-        case Some(s) if s matches "(?i)sparse" => false
-        case _ => true             
-    }
-		
+	
 		println("*** Classification info:" + algoInfo)
-				
+	    
+	    val format = params.get("--file-format") match {
+	        case Some(s) if s matches "(?i)LibSVM" => s
+	        case _ => "KEEL"             
+	    }
+	    
+	    val dense = params.get("--file-format") match {
+	        case Some(s) if s matches "(?i)sparse" => false
+	        case _ => true             
+	    }
+					
 		// Extract data files    
-    val header = params.get("header-file")
-		val dataFiles = params.get("data-dir") match {
-			case Some(dataDir) => (header, dataDir)
-			case _ =>
-			  val trainFile = params.get("train-file")
-			  val testFile = params.get("test-file")		
-			  (trainFile, testFile) match {
-					case (Some(tr), Some(tst)) => (header, tr, tst)
-					case _ => 
-					  System.err.println("Bad usage. Either train or test file is missing.")
-					  System.exit(-1)
-			  }
-		}
+	    val header = params.get("header-file")
+			val dataFiles = params.get("data-dir") match {
+				case Some(dataDir) => (header, dataDir)
+				case _ =>
+				  val trainFile = params.get("train-file")
+				  val testFile = params.get("test-file")		
+				  (trainFile, testFile) match {
+						case (Some(tr), Some(tst)) => (header, tr, tst)
+						case _ => 
+						  System.err.println("Bad usage. Either train or test file is missing.")
+						  System.exit(-1)
+				  }
+			}
     
 		
 		// Perform the experiment

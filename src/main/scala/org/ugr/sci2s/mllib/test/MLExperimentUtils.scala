@@ -297,7 +297,7 @@ object MLExperimentUtils {
 			}
 		}
     
-    def getExperimentParams(params: Map[String, String]) = {
+		def getExperimentParams(params: Map[String, String]) = {
         val outputDir = params.get("output-dir")
     
         // Header file and output dir must be present
@@ -319,7 +319,7 @@ object MLExperimentUtils {
           println("*** Number of bins: " + nBins)     
     
           val discretizer = EntropyMinimizationDiscretizer.train(train,
-              ECBDLRangeContFeatures, // continuous features 
+              Some(ECBDLRangeContFeatures), // continuous features 
               nBins) // max number of values per feature
             discretizer
         }
@@ -428,36 +428,36 @@ object MLExperimentUtils {
 				cvdata.toArray
 			}
       
-      val (headerFile, dataFiles, format, dense) = inputData match {
-        case ((header: Option[String], dataPath: String, kfold: Int), format: String, dense: Boolean) => 
-          (header, getDataFiles(dataPath, kfold), format, dense)
-        case ((header: Option[String], train: String, test: String), format: String, dense: Boolean) => 
-          (header, Array((train, test)), format, dense)
-      } 
+		      val (headerFile, dataFiles, format, dense) = inputData match {
+		        case ((header: Option[String], dataPath: String, kfold: Int), format: String, dense: Boolean) => 
+		          (header, getDataFiles(dataPath, kfold), format, dense)
+		        case ((header: Option[String], train: String, test: String), format: String, dense: Boolean) => 
+		          (header, Array((train, test)), format, dense)
+		      } 
 			
-      val samplingRate = 1.0      
-			// Create the function to read the labeled points
-			val readFile = format match {
-          case "(?i)LibSVM" => 
-            (filePath: String) => {
-              val svmData = MLUtils.loadLibSVMFile(sc, filePath)
-              val data = if(samplingRate < 1.0) svmData.sample(false, samplingRate) else svmData
-              if(dense) {
-                data.map{case LabeledPoint(label, features) => 
-                  new LabeledPoint(label, Vectors.dense(features.toArray))}
-              } else {
-                data
-              }
-            }
-          case _ => 
-           (filePath: String) => {
-              val typeConversion = KeelParser.parseHeaderFile(sc, headerFile.get) 
-              val bcTypeConv = sc.broadcast(typeConversion).value
-              val lines = sc.textFile(filePath: String)
-              val data = if(samplingRate < 1.0) lines.sample(false, samplingRate) else lines
-              data.map(line => (KeelParser.parseLabeledPoint(bcTypeConv, line)))              
-            }
-      }      
+		      val samplingRate = 1.0      
+    		  // Create the function to read the labeled points
+    		  val readFile = format match {
+		          case "(?i)LibSVM" => 
+		            (filePath: String) => {
+		              val svmData = MLUtils.loadLibSVMFile(sc, filePath)
+		              val data = if(samplingRate < 1.0) svmData.sample(false, samplingRate) else svmData
+		              if(dense) {
+		                data.map{case LabeledPoint(label, features) => 
+		                  new LabeledPoint(label, Vectors.dense(features.toArray))}
+		              } else {
+		                data
+		              }
+		            }
+		          case _ => 
+		           (filePath: String) => {
+		              val typeConversion = KeelParser.parseHeaderFile(sc, headerFile.get) 
+		              val bcTypeConv = sc.broadcast(typeConversion)
+		              val lines = sc.textFile(filePath: String)
+		              val data = if(samplingRate < 1.0) lines.sample(false, samplingRate) else lines
+		              data.map(line => KeelParser.parseLabeledPoint(bcTypeConv.value, line))              
+		           }
+		      }      
       
 			val info = Map[String, String]("algoInfo" -> algoInfo)
 			val times = scala.collection.mutable.Map[String, Seq[Double]] ("FullTime" -> Seq(),
@@ -466,7 +466,6 @@ object MLExperimentUtils {
 			    "ClsTime" -> Seq())
 			
 			val nFolds = dataFiles.length
-			//val confusionMatrices = Seq.empty[ConfusionMatrixWithDict]
 			var predictions = Array.empty[(RDD[(Double, Double)], RDD[(Double, Double)])]
 			    
 			val accTraResults = Seq.empty[(Double, Double)]
@@ -476,8 +475,6 @@ object MLExperimentUtils {
 				val (trainFile, testFile) = dataFiles(i)
 				val trainData = readFile(trainFile)
 				val testData = readFile(testFile)
-				//trainData.persist(StorageLevel.MEMORY_ONLY_SER) 
-				//testData.persist(StorageLevel.MEMORY_ONLY_SER)
 				
 				// Discretization
 				var trData = trainData; var tstData = testData
@@ -525,64 +522,63 @@ object MLExperimentUtils {
 			}
 			
 			// Print the aggregated results
-      val timeStr = getTimeResults(times.toMap)
-      val printPredictions = classify match { case Some(_) => true; case None => false}
-			printResults(outputDir, predictions, info, timeStr, printPredictions)
+			val timeStr = getTimeResults(times.toMap)
+			val printPredictions = classify match { case Some(_) => true; case None => false}
+			printResults(sc, outputDir, predictions, info, timeStr)
 		}
     
-    private def getTimeResults(timeResults: Map[String, Seq[Double]]) = {
-        "Mean Discretization Time:\t" + 
-            timeResults("DiscTime").sum / timeResults("DiscTime").size + " seconds.\n" +
-        "Mean Feature Selection Time:\t" + 
-            timeResults("FSTime").sum / timeResults("FSTime").size + " seconds.\n" +
-       "Mean Classification Time:\t" + 
-            timeResults("ClsTime").sum / timeResults("ClsTime").size + " seconds.\n"
-        "Mean Execution Time:\t" + 
-            timeResults("FullTime").sum / timeResults("FullTime").size + " seconds.\n" 
-    }
+	    private def getTimeResults(timeResults: Map[String, Seq[Double]]) = {
+	        "Mean Discretization Time:\t" + 
+	            timeResults("DiscTime").sum / timeResults("DiscTime").size + " seconds.\n" +
+	        "Mean Feature Selection Time:\t" + 
+	            timeResults("FSTime").sum / timeResults("FSTime").size + " seconds.\n" +
+	       "Mean Classification Time:\t" + 
+	            timeResults("ClsTime").sum / timeResults("ClsTime").size + " seconds.\n"
+	        "Mean Execution Time:\t" + 
+	            timeResults("FullTime").sum / timeResults("FullTime").size + " seconds.\n" 
+	    }
 
 		private def printResults(
+				sc: SparkContext,
 				outputDir: String, 
 				predictions: Array[(RDD[(Double, Double)], RDD[(Double, Double)])], 
 				info: Map[String, String],
-        timeResults: String, 
-        predictionResults: Boolean = true) {
+				timeResults: String) {
          
-        var output = timeResults
-        if(predictionResults){
-            // Statistics by fold
-            output += info.get("algoInfo").get + "Accuracy Results\tTrain\tTest\n"
-      			val traFoldAcc = predictions.map(_._1).map(computeAccuracy)
-      			val tstFoldAcc = predictions.map(_._2).map(computeAccuracy)		
-      			// Print fold results into the global result file
-      			for (i <- 0 until predictions.size){
-      				output += s"Fold $i:\t" +
-      					traFoldAcc(i) + "\t" + tstFoldAcc(i) + "\n"
-      			} 
-      			
-      			// Aggregated statistics
-      			val (aggAvgAccTr, aggStdAccTr) = calcAggStatistics(traFoldAcc)
-      			val (aggAvgAccTst, aggStdAccTst) = calcAggStatistics(tstFoldAcc)
-      			output += s"Avg Acc:\t$aggAvgAccTr\t$aggAvgAccTst\n"
-      			output += s"Svd acc:\t$aggStdAccTr\t$aggStdAccTst\n"
-      					
-      			// Confusion Matrix
-      			val aggTstConfMatrix = ConfusionMatrix.apply(predictions.map(_._2).reduceLeft(_ ++ _))			    
-    		    output += "Test Confusion Matrix\n" + aggTstConfMatrix.toString
-    		    output += aggTstConfMatrix.fValue.foldLeft("\t")((str, t) => str + "\t" + t._1) + "\n"
-    		    
-    		    output += aggTstConfMatrix.fValue.foldLeft("F-Measure:")((str, t) => str + "\t" + t._2) + "\n"
-    		    output += aggTstConfMatrix.precision.foldLeft("Precision:")((str, t) => str + "\t" + t._2) + "\n"
-    		    output += aggTstConfMatrix.recall.foldLeft("Recall:")((str, t) => str + "\t" + t._2) + "\n"
-    		    output += aggTstConfMatrix.specificity.foldLeft("Specificity:")((str, t) => str + "\t" + t._2) + "\n\n"
-    		    
-    		    val aggTraConfMatrix = ConfusionMatrix.apply(predictions.map(_._1).reduceLeft(_ ++ _))
-    		    output += "Train Confusion Matrix\n" + aggTraConfMatrix.toString
-        }
-			  println(output)
+	        var output = timeResults
+	        if(!predictions.isEmpty){
+	            // Statistics by fold
+	            output += info.get("algoInfo").get + "Accuracy Results\tTrain\tTest\n"
+	      			val traFoldAcc = predictions.map(_._1).map(computeAccuracy)
+	      			val tstFoldAcc = predictions.map(_._2).map(computeAccuracy)		
+	      			// Print fold results into the global result file
+	      			for (i <- 0 until predictions.size){
+	      				output += s"Fold $i:\t" +
+	      					traFoldAcc(i) + "\t" + tstFoldAcc(i) + "\n"
+	      			} 
+	      			
+	      			// Aggregated statistics
+	      			val (aggAvgAccTr, aggStdAccTr) = calcAggStatistics(traFoldAcc)
+	      			val (aggAvgAccTst, aggStdAccTst) = calcAggStatistics(tstFoldAcc)
+	      			output += s"Avg Acc:\t$aggAvgAccTr\t$aggAvgAccTst\n"
+	      			output += s"Svd acc:\t$aggStdAccTr\t$aggStdAccTst\n"
+	      					
+	      			// Confusion Matrix
+	      			val aggTstConfMatrix = ConfusionMatrix.apply(predictions.map(_._2).reduceLeft(_ ++ _))			    
+	    		    output += "Test Confusion Matrix\n" + aggTstConfMatrix.toString
+	    		    output += aggTstConfMatrix.fValue.foldLeft("\t")((str, t) => str + "\t" + t._1) + "\n"
+	    		    
+	    		    output += aggTstConfMatrix.fValue.foldLeft("F-Measure:")((str, t) => str + "\t" + t._2) + "\n"
+	    		    output += aggTstConfMatrix.precision.foldLeft("Precision:")((str, t) => str + "\t" + t._2) + "\n"
+	    		    output += aggTstConfMatrix.recall.foldLeft("Recall:")((str, t) => str + "\t" + t._2) + "\n"
+	    		    output += aggTstConfMatrix.specificity.foldLeft("Specificity:")((str, t) => str + "\t" + t._2) + "\n\n"
+	    		    
+	    		    val aggTraConfMatrix = ConfusionMatrix.apply(predictions.map(_._1).reduceLeft(_ ++ _))
+	    		    output += "Train Confusion Matrix\n" + aggTraConfMatrix.toString
+	        }
+			println(output)
 			
-			  val sc = predictions(0)._1.context
-			  val hdfsOutput = sc.parallelize(Array(output), 1)
-			  hdfsOutput.saveAsTextFile(outputDir + "/globalResult.txt")
+			val hdfsOutput = sc.parallelize(Array(output), 1)
+			hdfsOutput.saveAsTextFile(outputDir + "/globalResult.txt")
 		}
 }

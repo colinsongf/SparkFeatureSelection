@@ -10,12 +10,15 @@ import org.apache.spark.SparkContext
 
 object KeelParser {
   
+	// Only call once (KEEL append lines to the header)
 	def parseHeaderFile (sc: SparkContext, file: String): Array[Map[String, Double]] = {
   	  val header = sc.textFile(file)
   	  // Java code classes
   	  var arr: ArrayList[String] = new ArrayList[String]
   	  // Important to collect and work with arrays instead of RDD's
   	  for(x <- header.collect()) arr.add(x)
+  	  
+  	  Attributes.clearAll()
   	  new InstanceSet().parseHeaderFromString(arr, true)
   	  
   	  val conv = new Array[Map[String, Double]](Attributes.getNumAttributes)
@@ -25,12 +28,7 @@ object KeelParser {
   			  val values = Attributes.getAttribute(i)
   					  .getNominalValuesList()
   					  .asInstanceOf[java.util.Vector[String]]
-				//  	  .asScala
-				 // 	  .toSeq
-			  // Transform nominal values to range [0.0, size]
-  			  // conv(i) = values.zipWithIndex.toMap.mapValues(_.toDouble)
-  			  // Transform nominal values to Integer
-			  val gen = for (j <- 0 until values.size) yield (values.get(j) -> j.toDouble) 
+  			  val gen = for (j <- 0 until values.size) yield (values.get(j) -> j.toDouble) 
 			  conv(i) = gen.toMap
   		  }    	
   	  }
@@ -40,7 +38,7 @@ object KeelParser {
   
 	def parseLabeledPoint (conv: Array[Map[String, Double]], str: String): LabeledPoint = {
 	  
-		val tokens = str split ","		
+		val tokens = str split ","
 		require(tokens.length == conv.length)
 		
 		val arr = (conv, tokens).zipped
@@ -49,16 +47,5 @@ object KeelParser {
 		val label = arr.last
 		
 		new LabeledPoint(label, Vectors.dense(features))
-	}
-	
-	def parseDensePoint (conv: Array[Map[String, Double]], str: String, omitLast: Boolean) = {
-	  
-		val tokens = str split ","		
-		require(tokens.length == conv.length)
-		
-		val point = (conv, tokens).zipped.map((c, elem) => c.getOrElse(elem, elem.toDouble))
-		if(omitLast) point.drop(point.length)
-		
-		Vectors.dense(point)
 	}
 }
