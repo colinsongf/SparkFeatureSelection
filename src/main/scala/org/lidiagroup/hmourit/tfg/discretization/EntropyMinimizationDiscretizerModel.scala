@@ -3,6 +3,7 @@ package org.lidiagroup.hmourit.tfg.discretization
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.rdd.RDD
 import org.apache.spark.mllib.linalg.Vectors
+import org.apache.spark.mllib.linalg.DenseVector
 
 /**
  * This class provides the methods to discretize data with the given thresholds.
@@ -17,7 +18,11 @@ class EntropyMinimizationDiscretizerModel (val thresholds: Map[Int, Seq[Double]]
    * @param data Data point to discretize.
    * @return Data point with values discretized
    */
-  override def discretize(data: LabeledPoint, dense: Boolean = true): LabeledPoint = {
+  override def discretize(data: LabeledPoint): LabeledPoint = {
+    val dense = data.features match {
+    	case _: DenseVector => true
+    	case _ => false
+    }
     val newValues = data.features.toArray.zipWithIndex.map({ case (value, i) =>
       val threshold = thresholds.get(i)
         threshold match {
@@ -35,8 +40,12 @@ class EntropyMinimizationDiscretizerModel (val thresholds: Map[Int, Seq[Double]]
    * @param data RDD representing data points to discretize.
    * @return RDD with values discretized
    */
-  override def discretize(data: RDD[LabeledPoint], dense: Boolean = true): RDD[LabeledPoint] = {
+  override def discretize(data: RDD[LabeledPoint]): RDD[LabeledPoint] = {
     val bc_thresholds = data.context.broadcast(this.thresholds)
+    val dense = data.first.features match {
+    	case _: DenseVector => true
+    	case _ => false
+    }
 
     // applies thresholds to discretize every continuous feature
     data.map({ case LabeledPoint(label, values) =>
