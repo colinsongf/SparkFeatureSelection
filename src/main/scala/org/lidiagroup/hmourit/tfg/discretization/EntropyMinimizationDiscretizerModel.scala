@@ -2,37 +2,33 @@ package org.lidiagroup.hmourit.tfg.discretization
 
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.rdd.RDD
-import org.apache.spark.mllib.linalg.Vectors
-import org.apache.spark.mllib.linalg.DenseVector
+import org.apache.spark.mllib.linalg._
+import breeze.linalg.{SparseVector => BSV}
+import org.apache.spark.broadcast.Broadcast
+import org.apache.spark.mllib.util.SearchUtils
 
 /**
  * This class provides the methods to discretize data with the given thresholds.
- * @param thresholds Thresholds used to discretize.
+ * @param thresholds Thresholds used to discretize (must be sorted)
+ *  
  */
-class EntropyMinimizationDiscretizerModel (val thresholds: Map[Int, Seq[Double]])
+class EntropyMinimizationDiscretizerModel (val thresholds: Array[(Int, Seq[Double])])
   extends DiscretizerModel[LabeledPoint] with Serializable {
-
-  /**
-   * Discretizes values for the given data set using the model trained.
-   *
-   * @param data Data point to discretize.
-   * @return Data point with values discretized
-   */
-  override def discretize(data: LabeledPoint): LabeledPoint = {
-    val dense = data.features match {
-    	case _: DenseVector => true
-    	case _ => false
+  
+  
+  /*override def discretize(data: LabeledPoint): LabeledPoint = {
+    
+    val discFeatures = data.features match { 
+      	case values: SparseVector =>
+    	    val newValues = discretizeFeatures(values.indices, values.values, thresholds)
+    	    Vectors.sparse(values.size, values.indices, newValues)
+      	case values: DenseVector =>
+      	  	val newValues = discretizeFeatures((0 until values.size).toArray, values.toArray, thresholds)
+      	  	Vectors.dense(newValues)
     }
-    val newValues = data.features.toArray.zipWithIndex.map({ case (value, i) =>
-      val threshold = thresholds.get(i)
-        threshold match {
-        	case Some(th) => (i, assignDiscreteValue(value, th).toDouble)
-        	case None => (i, value)
-        }
-    })
-    if(dense) LabeledPoint(data.label, Vectors.dense(newValues.map(_._2).toArray)) else 
-        LabeledPoint(data.label, Vectors.sparse(newValues.size, newValues.map(_._1), newValues.map(_._2)))
-  }
+    
+    LabeledPoint(data.label, discFeatures)
+  }*/
 
   /**
    * Discretizes values for the given data set using the model trained.
@@ -40,25 +36,35 @@ class EntropyMinimizationDiscretizerModel (val thresholds: Map[Int, Seq[Double]]
    * @param data RDD representing data points to discretize.
    * @return RDD with values discretized
    */
-  override def discretize(data: RDD[LabeledPoint]): RDD[LabeledPoint] = {
-    val bc_thresholds = data.context.broadcast(this.thresholds)
-    val dense = data.first.features match {
-    	case _: DenseVector => true
-    	case _ => false
-    }
-
-    // applies thresholds to discretize every continuous feature
-    data.map({ case LabeledPoint(label, values) =>
-      val newValues = values.toArray.zipWithIndex.map({ case (value, i) =>
-        val threshold = bc_thresholds.value.get(i)
-        threshold match {
-        	case Some(th) => (i, assignDiscreteValue(value, th).toDouble)
-        	case None => (i, value)
-        }
-      })
-      if(dense) LabeledPoint(label, Vectors.dense(newValues.map(_._2).toArray)) else 
-        LabeledPoint(label, Vectors.sparse(newValues.size, newValues.map(_._1), newValues.map(_._2)))
-    })
+  override def discretize(data: RDD[LabeledPoint]) = {
+    // must be sorted to perform the evaluation
+    val bc_thresholds = data.context.broadcast(thresholds)    
+    data.map{
+      	case LabeledPoint(label, values: SparseVector) =>
+      	  	var newValues = Array.empty[Double]
+      	  	val threshInds = bc_thresholds.value.map(_._1)
+  			for(i <- 0 until values.indices.size) {
+  				val ind = SearchUtils.binarySearch2(threshInds, values.indices(i))
+  				if (ind == -1) {
+  					newValues = values.values(i) +: newValues
+  				} else {
+  					newValues = assignDiscreteValue(values.values(i), 
+  					    bc_thresholds.value(ind)._2).toDouble +: newValues
+  				}
+    	  	}
+      	  	// the `index` array inside sparse vector object will not be changed,
+      	  	// so we can re-use it to save memory.
+    	    LabeledPoint(label, Vectors.sparse(values.size, values.indices, newValues))
+  		case LabeledPoint(label, values: DenseVector) =>
+      	  	val threshInds = bc_thresholds.value.toMap
+      	  	val newValues = values.toArray.zipWithIndex.map({ case (value, i) =>
+      	  	  	threshInds.get(i) match {
+		        	case Some(th) => assignDiscreteValue(value, th).toDouble
+		        	case None => value
+		        }
+  	  	  	})
+      	  	LabeledPoint(label, Vectors.dense(newValues))
+	}
   }
 
 
@@ -75,7 +81,5 @@ class EntropyMinimizationDiscretizerModel (val thresholds: Map[Int, Seq[Double]]
   }
   
   override def getThresholds() = thresholds
-  
-  
 
 }
