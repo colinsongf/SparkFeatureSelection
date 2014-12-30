@@ -11,12 +11,15 @@ import scala.util.Random
 import org.lidiagroup.hmourit.tfg._
 import scala.collection.immutable.List
 import org.lidiagroup.hmourit.tfg.discretization._
-import org.apache.spark.mllib.featureselection._
+import org.lidiagroup.hmourit.tfg.featureselection._
 import org.apache.spark.mllib.linalg.Vectors
 import org.apache.hadoop.mapreduce.lib.input.InvalidInputException
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.storage.StorageLevel
 import org.apache.spark.mllib.util.MLUtils
+import org.lidiagroup.hmourit.tfg.featureselection.FeatureSelectionModel
+import org.lidiagroup.hmourit.tfg.featureselection.InfoThFeatureSelectionModel
+import org.ugr.sci2s.mllib.test.KeelParser
 
 object MLExperimentUtils {
   
@@ -142,7 +145,7 @@ object MLExperimentUtils {
 		  	 **/
 			try {
 				val thresholds = sc.textFile(outputDir + "/discThresholds_" + iteration).filter(!_.isEmpty())
-									.map(parseThresholds).collect.toMap
+									.map(parseThresholds).collect
 				
 				val discAlgorithm = new EntropyMinimizationDiscretizerModel(thresholds)
 				val discTime = sc.textFile(outputDir + "/disc_time_" + iteration)
@@ -150,14 +153,14 @@ object MLExperimentUtils {
 						.map(_.toDouble)
 						.first
             
-        val discData = discAlgorithm.discretize(train)
-        val discTestData = discAlgorithm.discretize(test)
-          
-        // Save discretized data 
-        if(save) {
-           discData.saveAsTextFile(outputDir + "/disc_train_" + iteration + ".csv")
-           discTestData.saveAsTextFile(outputDir + "/disc_test_" + iteration + ".csv")       
-        } 
+		        val discData = discAlgorithm.discretize(train)
+		        val discTestData = discAlgorithm.discretize(test)
+		          
+		        // Save discretized data 
+		        if(save) {
+		           discData.saveAsTextFile(outputDir + "/disc_train_" + iteration + ".csv")
+		           discTestData.saveAsTextFile(outputDir + "/disc_test_" + iteration + ".csv")       
+		        } 
         
 				(discData, discTestData, discTime)			
 				
@@ -168,12 +171,12 @@ object MLExperimentUtils {
 					val discTime = (System.nanoTime() - initStartTime) / 1e9
 					val discData = discAlgorithm.discretize(train)
 					val discTestData = discAlgorithm.discretize(test)
-          
-          // Save discretized data 
-          if(save) {
-             discData.saveAsTextFile(outputDir + "/disc_train_" + iteration + ".csv")
-             discTestData.saveAsTextFile(outputDir + "/disc_test_" + iteration + ".csv")       
-          } 
+		          
+		          // Save discretized data 
+		          if(save) {
+		             discData.saveAsTextFile(outputDir + "/disc_train_" + iteration + ".csv")
+		             discTestData.saveAsTextFile(outputDir + "/disc_test_" + iteration + ".csv")       
+		          } 
 					
 					// Save the obtained thresholds in a HDFS file (as a sequence)
 					val thresholds = discAlgorithm.getThresholds.toArray.sortBy(_._1)
@@ -296,112 +299,7 @@ object MLExperimentUtils {
 					(traValuesAndPreds, tstValuesAndPreds, classificationTime)
 			}
 		}
-    
-		def getExperimentParams(params: Map[String, String]) = {
-        val outputDir = params.get("output-dir")
-    
-        // Header file and output dir must be present
-        (outputDir) match {
-          case None => 
-            System.err.println("Bad usage. Output dir is missing.")
-            System.exit(-1)
-          case _ =>
-        }
-        
-        // Discretization
-        val disc = (train: RDD[LabeledPoint]) => {
-          val ECBDLRangeContFeatures = (0 to 2) ++ (21 to 38) ++ (93 to 130) ++ (151 to 630)
-          val irisRangeContFeatures = 0 to 3
-          val nBins = this.toInt(params.getOrElse("disc-nbins", "10"), 10)
-    
-          println("*** Discretization method: Fayyad discretizer (MDLP)")
-          println("*** Features to discretize: " + ECBDLRangeContFeatures.mkString(","))
-          println("*** Number of bins: " + nBins)     
-    
-          val discretizer = EntropyMinimizationDiscretizer.train(train,
-              Some(ECBDLRangeContFeatures), // continuous features 
-              nBins) // max number of values per feature
-            discretizer
-        }
-        
-        val discretization = params.get("disc") match {
-          case Some(s) if s matches "(?i)yes" => 
-            params.get("save-disc") match {
-              case Some(s) if s matches "(?i)yes" => 
-                (Some(disc), true)
-              case _ => (Some(disc), false)
-            }
-          case _ => (None, false)
-        }   
-        
-        // Feature Selection
-        val fs = (data: RDD[LabeledPoint]) => {
-          val criterion = new InfoThCriterionFactory(params.getOrElse("fs-criterion", "mrmr"))
-          val nToSelect = this.toInt(params.getOrElse("fs-nfeat", "100"), 100)
-          val nPool = this.toInt(params.getOrElse("fs-npool", "100"), 100) // 0 -> w/o pool
-    
-          println("*** FS criterion: " + criterion.getCriterion.toString)
-          println("*** Number of features to select: " + nToSelect)
-          println("*** Pool size: " + nPool)
-          
-          val model = InfoThFeatureSelection.train(criterion, 
-              data,
-              nToSelect, // number of features to select
-              nPool) // number of features in pool
-            model
-        }
-        
-        val featureSelection = params.get("fs") match {
-          case Some(s) if s matches "(?i)yes" => 
-            params.get("save-fs") match {
-              case Some(s) if s matches "(?i)yes" => 
-                (Some(fs), true)
-              case _ => (Some(fs), false)
-            }
-          case _ => (None, false)
-        }   
-        
-        // Classification
-        val (algoInfo, classification) = params.get("classifier") match {
-            case Some(s) if s matches "(?i)no" => ("", None)
-            case Some(s) if s matches "(?i)NB" => (NBadapter.algorithmInfo(params), 
-                  Some(NBadapter.classify(_: RDD[LabeledPoint], params)))
-            case Some(s) if s matches "(?i)LR" => (LRadapter.algorithmInfo(params), 
-                  Some(LRadapter.classify(_: RDD[LabeledPoint], params)))        
-            case _ => (SVMadapter.algorithmInfo(params), // Default: SVM
-                  Some(SVMadapter.classify(_: RDD[LabeledPoint], params)))              
-        }
-        
-        val format = params.get("--file-format") match {
-            case Some(s) if s matches "(?i)LibSVM" => s
-            case _ => "KEEL"             
-        }
-        
-        val dense = params.get("--file-format") match {
-            case Some(s) if s matches "(?i)sparse" => false
-            case _ => true             
-        }
-        
-        println("*** Classification info:" + algoInfo)
-            
-        // Extract data files    
-        val header = params.get("header-file")
-        val dataFiles = params.get("data-dir") match {
-          case Some(dataDir) => (header, dataDir)
-          case _ =>
-            val trainFile = params.get("train-file")
-            val testFile = params.get("test-file")    
-            (trainFile, testFile) match {
-              case (Some(tr), Some(tst)) => (header, tr, tst)
-              case _ => 
-                System.err.println("Bad usage. Either train or test file is missing.")
-                System.exit(-1)
-            }
-        }
-        
-        (discretization, featureSelection, classification, (dataFiles, format, dense) , outputDir.get, algoInfo)
-    }
-		
+
 		/**
 		 * Execute a MLlib experiment with three optional phases (discretization, feature selection and classification)
 		 * @param sc Spark context
@@ -438,7 +336,7 @@ object MLExperimentUtils {
 		      val samplingRate = 1.0      
     		  // Create the function to read the labeled points
     		  val readFile = format match {
-		          case "(?i)LibSVM" => 
+		          case s if s matches "(?i)LibSVM" => 
 		            (filePath: String) => {
 		              val svmData = MLUtils.loadLibSVMFile(sc, filePath)
 		              val data = if(samplingRate < 1.0) svmData.sample(false, samplingRate) else svmData
@@ -522,9 +420,7 @@ object MLExperimentUtils {
 			}
 			
 			// Print the aggregated results
-			val timeStr = getTimeResults(times.toMap)
-			val printPredictions = classify match { case Some(_) => true; case None => false}
-			printResults(sc, outputDir, predictions, info, timeStr)
+			printResults(sc, outputDir, predictions, info, getTimeResults(times.toMap))
 		}
     
 	    private def getTimeResults(timeResults: Map[String, Seq[Double]]) = {
@@ -533,7 +429,7 @@ object MLExperimentUtils {
 	        "Mean Feature Selection Time:\t" + 
 	            timeResults("FSTime").sum / timeResults("FSTime").size + " seconds.\n" +
 	       "Mean Classification Time:\t" + 
-	            timeResults("ClsTime").sum / timeResults("ClsTime").size + " seconds.\n"
+	            timeResults("ClsTime").sum / timeResults("ClsTime").size + " seconds.\n" +
 	        "Mean Execution Time:\t" + 
 	            timeResults("FullTime").sum / timeResults("FullTime").size + " seconds.\n" 
 	    }

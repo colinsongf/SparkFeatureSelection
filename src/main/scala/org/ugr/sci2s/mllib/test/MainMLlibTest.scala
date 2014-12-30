@@ -9,8 +9,9 @@ import org.apache.spark.SparkConf
 import org.apache.spark.SparkContext
 import org.ugr.sci2s.mllib.test.{MLExperimentUtils => MLEU}
 import org.lidiagroup.hmourit.tfg.discretization._
-import org.apache.spark.mllib.featureselection._
-import breeze.linalg.{DenseVector => BDV, SparseVector => BSV, Vector => BV}
+import org.lidiagroup.hmourit.tfg.featureselection._
+import org.lidiagroup.hmourit.tfg.featureselection.InfoThCriterionFactory
+import org.lidiagroup.hmourit.tfg.featureselection.InfoThFeatureSelection
 
 class MLlibRegistrator extends KryoRegistrator {
   override def registerClasses(kryo: Kryo) {
@@ -51,7 +52,7 @@ object MainMLlibTest {
 		val outputDir = params.get("output-dir")
 		
 		// Header file and output dir must be present
-		(outputDir) match {
+		outputDir match {
 			case None => 
 			  System.err.println("Bad usage. Output dir is missing.")
 			  System.exit(-1)
@@ -75,11 +76,11 @@ object MainMLlibTest {
 		
 		val discretization = params.get("disc") match {
 			case Some(s) if s matches "(?i)yes" => 
-        params.get("save-disc") match {
-          case Some(s) if s matches "(?i)yes" => 
-            (Some(disc), true)
-          case _ => (Some(disc), false)
-        }
+		        params.get("save-disc") match {
+		          case Some(s) if s matches "(?i)yes" => 
+		            (Some(disc), true)
+		          case _ => (Some(disc), false)
+		        }
 			case _ => (None, false)
 		}		
 		
@@ -123,12 +124,12 @@ object MainMLlibTest {
 	
 		println("*** Classification info:" + algoInfo)
 	    
-	    val format = params.get("--file-format") match {
+	    val format = params.get("file-format") match {
 	        case Some(s) if s matches "(?i)LibSVM" => s
 	        case _ => "KEEL"             
 	    }
 	    
-	    val dense = params.get("--file-format") match {
+	    val dense = params.get("data-format") match {
 	        case Some(s) if s matches "(?i)sparse" => false
 	        case _ => true             
 	    }
