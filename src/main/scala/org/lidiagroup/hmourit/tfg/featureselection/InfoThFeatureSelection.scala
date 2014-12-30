@@ -1,13 +1,12 @@
-package org.apache.spark.mllib.featureselection
+package org.lidiagroup.hmourit.tfg.featureselection
 
 import org.apache.spark.rdd.RDD
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.SparkContext._
-import org.apache.spark.mllib.featureselection.{InfoTheory => IT}
+import org.lidiagroup.hmourit.tfg.featureselection.{InfoTheory => IT}
 import org.apache.spark.storage.StorageLevel
-import org.apache.spark.mllib.linalg.{DenseVector, SparseVector, Vector}
+import org.apache.spark.mllib.linalg.{DenseVector, SparseVector}
 import breeze.linalg.{DenseVector => BDV, SparseVector => BSV, Vector => BV}
-import breeze.linalg.convert
 
 /**
  * Train a info-theory feature selection model according to a criterion.
@@ -16,37 +15,26 @@ import breeze.linalg.convert
  */
 class InfoThFeatureSelection private (
     val criterionFactory: InfoThCriterionFactory,
-    var poolSize:  Int = 30,
     val data: RDD[LabeledPoint])
   extends Serializable {
 
   private type Pool = RDD[(Int, InfoThCriterion)]
   protected case class F(feat: Int, crit: Double)
     
+	val (nFeatures, isDense) = data.first.features match {
+		case v: SparseVector => (v.size, false)
+		case v: DenseVector => (v.size, true)			  
+	}
   
-  val (byteData, nFeatures, isDense) = data.first().features match {
-      case _: SparseVector => 
-         val bd: RDD[(BV[Byte], Int)] = data.map({ case LabeledPoint(label, values) =>
-            val sv = values.asInstanceOf[SparseVector]
-            (new BSV( 0 +: sv.indices.map(_ + 1), 
-                label.toByte +: sv.toArray.map(_.toByte), 
-                sv.size + 1), sv.indices.max)
-          })
-          (bd.map(_._1).persist(StorageLevel.MEMORY_ONLY_SER), 
-              bd.map(_._2).max, 
-              false)
-      case ffeatures: DenseVector =>
-        val bd: RDD[BV[Byte]] = data.map({ case LabeledPoint(label, values) => 
-            val sv = values.asInstanceOf[DenseVector]
-            new BDV(label.toByte +: sv.toArray.map(_.toByte))
-        })
-        (bd.persist(StorageLevel.MEMORY_ONLY_SER),
-            ffeatures.size, 
-            true)
+  	val byteData: RDD[BV[Byte]] = data.map {
+      case LabeledPoint(label, values: SparseVector) => 
+            new BSV[Byte](0 +: values.indices.map(_ + 1), label.toByte +: values.values.toArray.map(_.toByte), values.indices.size + 1)
+      case LabeledPoint(label, values: DenseVector) => 
+            new BDV[Byte](label.toByte +: values.toArray.map(_.toByte))
     }
   
     val nElements = byteData.count()
-  
+    
   /**
    * Wrapper method to calculate mutual information (MI) and conditional mutual information (CMI) 
    * on several X variables with the capability of splitting the calculations into several chunks.
@@ -55,82 +43,106 @@ class InfoThFeatureSelection private (
    * @param miniBatchFraction Percentage of simultaneous features to calculate MI and CMI (just in case).
    * @return MI and CMI results for each X variable
    */
-  protected def calcMutualInformation(
-       applyMI: Seq[Int] => scala.collection.Map[(Int, Int),(Double, Double)], 
+  @deprecated
+    protected def calcMutualInformation(
+       applyMI: Seq[Int] => RDD[((Int, Int),(Double, Double))], 
        varX: Seq[Int], 
        miniBatchFraction: Float) = {
+    	  val miniBatchSize = math.round(varX.length * miniBatchFraction)
+		  val it = varX.grouped(miniBatchSize)
+		  var results = Seq.empty[RDD[((Int, Int), (Double, Double))]]
+		  while (it.hasNext) applyMI(it.next) +: results
+		  for(i <- 1 until results.size) results(0).union(results(i))
+		  results(0)
+  }
     
-	  val miniBatchSize = math.round(varX.length * miniBatchFraction)
-	  val featuresWindow = varX.grouped(miniBatchSize).toArray
-	  val resultsByWindow = for (w <- featuresWindow) yield applyMI(w).toArray
-	  resultsByWindow.reduce(_ ++ _)	  
-  }
-
-  
-  def setPoolSize(poolSize: Int) = {
-    this.poolSize = poolSize
-    this
-  }
+	implicit val orderedByScore = new Ordering[(Int, InfoThCriterion)] {
+	    override def compare(a: (Int, InfoThCriterion), b: (Int, InfoThCriterion)) = {
+	    	a._2.score.compare(b._2.score) 
+	    }
+	}
+	
+	implicit val orderedByRelevance = new Ordering[(Int, InfoThCriterion)] {
+	    override def compare(a: (Int, InfoThCriterion), b: (Int, InfoThCriterion)) = {
+	    	a._2.relevance.compare(b._2.relevance) 
+	    }
+	}
+	
   
   /**
-   * Method that trains a info-theory selection model without using pool optimization.
+   * Trains a info-theory selection model without using pool optimization.
    * @param data Data points represented by a byte array (first element is the class attribute).
    * @param nToSelect Number of features to select.
    * @param nElements Number of instances.
-   * @param miniBatchFraction Fraction of data to be used in each iteration (just in case).
    * @return A list with the most relevant features and its scores
    */
    protected def selectFeaturesWithoutPool(
       data: RDD[BV[Byte]],
       nToSelect: Int,
-      miniBatchFraction: Float)
-    : Seq[F] = {            
+      poolSize: Int)
+    	: RDD[(Int, Double)] = {            
      
+    require(nToSelect < nFeatures)
     val label = 0
+    val sc = data.context
     
     // calculate relevance
-    val calcMI = IT.miAndCmi(data, _: Seq[Int], Seq(label), None, nElements, nFeatures, isDense)
-    val MiAndCmi = calcMutualInformation(calcMI, 1 to nFeatures, miniBatchFraction)
-	  var pool = MiAndCmi.map({ case ((x, y), (mi, _)) => (x, criterionFactory.getCriterion.init(mi)) }).toMap
-	
-	  // Print most relevant features
-    val strMRMR = MiAndCmi.sortBy(-_._2._1)
-    	.take(nToSelect)
-    	.map({case ((f, _), (mi, _)) => f + "\t" + "%.4f" format mi})
-    	.mkString("\n")
-    println("\n*** MaxRel features ***\nFeature\tScore\n" + strMRMR)
+    val MiAndCmi = if(isDense) 
+      IT.miAndCmi(data, 1 to nFeatures, Seq(label), None, nElements, nFeatures, isDense) 
+    else
+      IT.miAndCmi(data, Seq(label), Seq(label), None, nElements, nFeatures)
+    
+    // Init criterions and sort by key
+    var pool = MiAndCmi
+    	.map({ case ((x, _), (mi, _)) => (x, criterionFactory.getCriterion.init(mi)) })
+		.sortByKey()
+    
+	// Print most relevant features
+    val strRels = pool
+    	.top(nToSelect)(orderedByRelevance)
+    	.map({case (f, c) => f + "\t" + "%.4f" format c.relevance}).mkString("\n")
+    println("\n*** MaxRel features ***\nFeature\tScore\n" + strRels)
 	
     // get maximum and select it
-    val firstMax = pool.maxBy(_._2.score)
-    var selected = Seq(F(firstMax._1, firstMax._2.score))
-    pool = pool - firstMax._1
-
-    while (selected.size < nToSelect) {
+    val max = pool.max()(orderedByScore)
+    var lastSelected = (max._1, max._2.score)
+    var selected = sc.parallelize(Seq(lastSelected))
+    pool = pool.subtractByKey(selected)
+    var nSelected = 1
+    
+    while (nSelected < nToSelect) {
       // update pool
-      val calcMI = IT.miAndCmi(data, _: Seq[Int], Seq(selected.head.feat), Some(label), nElements, nFeatures, isDense)
-  	  val newMiAndCmi = calcMutualInformation(calcMI, pool.keys.toSeq, miniBatchFraction)
-          .map({ case ((x, _), crit) => (x, crit) })
-          .toMap
-      pool.foreach({ case (k, crit) =>
-        newMiAndCmi.get(k) match {
-          case Some((mi, cmi)) => crit.update(mi, cmi)
-          case None => 
-        }
-      })
+      val newMiAndCmi = if(isDense) {
+		  IT.miAndCmi(data, pool.map(_._1).collect, Seq(lastSelected._1), 
+				  Some(label), nElements, nFeatures, isDense) 
+	  } else {
+		  // As label = 0, it is not necessary to sort
+		  val inverseX = label +: selected.sortByKey().map(_._1).collect
+		  IT.miAndCmi(data, inverseX, Seq(lastSelected._1), Some(label), nElements, nFeatures)
+	  }	  	
+      
+  	  // Update criterions in the pool
+  	  pool = pool.leftOuterJoin(newMiAndCmi.map({ case ((x, _), crit) => (x, crit) }))
+  	  			.mapValues{
+			  	    case (crit, Some((mi, cmi))) => crit.update(mi, cmi)
+			  	    case (crit, None) => crit
+		      	}
 
-      // get maximum and select it
-      val max = pool.maxBy(_._2.score)
-
-      // select feature
-      selected = F(max._1, max._2.score) +: selected
-      pool = pool - max._1
-      val strSelected = selected.reverse
-    	    .map({case F(f, c) => f + "\t" + "%.4f" format c})
+      // get the maximum and add it to the final set
+      val max = pool.max()(orderedByScore)
+      lastSelected = (max._1, max._2.score)
+      val newSelected = sc.parallelize(Seq(lastSelected))
+      selected = selected.union(newSelected)
+      pool = pool.subtractByKey(newSelected)
+      nSelected = nSelected + 1
+      /*val strSelected = selected
+    	    .map({case (f, c) => f + "\t" + "%.4f" format c})
+    	    .collect
     	    .mkString("\n")
-      println("\n*** Selected features ***\nFeature\tScore\n" + strSelected)
+      println("\n*** Selected features ***\nFeature\tScore\n" + strSelected)*/
     }
     
-    selected.reverse
+    selected
   }
 
  /**
@@ -144,146 +156,133 @@ class InfoThFeatureSelection private (
   protected def selectFeaturesWithPool(
       data: RDD[BV[Byte]],
       nToSelect: Int,
-      miniBatchFraction: Float)
-    : Seq[F] = {
+      poolSize: Int)
+    : RDD[(Int, Double)] = {
     
+    require(nToSelect < nFeatures)
     val label = 0
+    val sc = data.context
     
     // calculate relevance
-    val calcMI = IT.miAndCmi(data, _: Seq[Int], Seq(label), None, nElements, nFeatures, isDense)
-    var orderedRels = calcMutualInformation(calcMI, 1 to nFeatures, miniBatchFraction)
-    	.map({ case ((k, _), (mi, _)) => (k, mi) })
-        .sortBy(-_._2)
-        
+    val MiAndCmi = if(isDense) 
+      IT.miAndCmi(data, 1 to nFeatures, Seq(label), None, nElements, nFeatures, isDense) 
+    else
+      IT.miAndCmi(data, Seq(label), Seq(label), None, nElements, nFeatures)
+    var wholeSet = MiAndCmi.map({ case ((k, _), (mi, _)) => (k, criterionFactory.getCriterion.init(mi)) })
+	        
     // Print most relevant features
-    val strRels = orderedRels
-    	.take(nToSelect)
-    	.map({case (f, c) => f + "\t" + "%.4f" format c}).mkString("\n")
+    val strRels = wholeSet
+    	.top(nToSelect)(orderedByRelevance)
+    	.map({case (f, c) => f + "\t" + "%.4f" format c.relevance}).mkString("\n")
     println("\n*** MaxRel features ***\nFeature\tScore\n" + strRels)
 	
     // extract pool
-    val initialPoolSize = math.min(math.max(poolSize, nToSelect), orderedRels.length)
-    var pool = orderedRels.take(initialPoolSize).map({ case (k, mi) =>
-    	(k, criterionFactory.getCriterion.init(mi))
-    }).toMap
-    orderedRels = orderedRels.drop(initialPoolSize)
+    val initialPoolSize = math.max(poolSize, nToSelect)
+    // var indixes must be sorted before applying MI function
+    var pool = sc.parallelize(wholeSet.top(initialPoolSize)(orderedByRelevance)).sortByKey()
+	wholeSet = wholeSet.subtractByKey(pool)
+	var leftRels = nFeatures - initialPoolSize
 
     // select feature with the maximum relevance
-    var max = pool.maxBy(_._2.score)
-    var selected = Seq(F(max._1, max._2.score))
-    pool = pool - max._1
+    var max = pool.max()(orderedByScore)
+    var lastSelected = (max._1, max._2.score)
+    var selected = sc.parallelize(Seq(lastSelected))
+    pool = pool.subtractByKey(selected)
+    var nSelected = 1
+    
+    while (nSelected < nToSelect) {
 
-    while (selected.size < nToSelect) {
-
-      // update pool
-      val calcMI = IT.miAndCmi(data, _: Seq[Int], Seq(selected.head.feat), Some(label), nElements, nFeatures, isDense)
-	    val newMiAndCmi = calcMutualInformation(calcMI, pool.keys.toSeq, miniBatchFraction)
+      // update pool (varX must be sorted)
+      val newMiAndCmi = IT.miAndCmi(data, pool.map(_._1).collect, Seq(lastSelected._1), 
+          Some(label), nElements, nFeatures, isDense)
             .map({ case ((x, _), crit) => (x, crit) })
-            .toMap
-      pool.foreach({ case (k, crit) =>
-          newMiAndCmi.get(k) match {
-            case Some((mi, cmi)) => crit.update(mi, cmi)
-            case None => 
-          }
-      })
-      
+            
+	  pool = pool.leftOuterJoin(newMiAndCmi)
+  	  			.mapValues{
+			  	    case (crit, Some((mi, cmi))) => crit.update(mi, cmi)
+			  	    case (crit, None) => crit
+		      	}
+	  
       // look for maximum and bound
-      max = pool.maxBy(_._2.score)
-      var min = pool.minBy(_._2.relevance)._2.asInstanceOf[InfoThCriterion with Bound]
+      max = pool.max()(orderedByScore)
+      var bound = pool.min()(orderedByRelevance)._2
+      		.asInstanceOf[InfoThCriterion with Bound].bound
       
       // increase pool if necessary
-      while (max._2.score < min.bound && orderedRels.size > 0) {
+      while (max._2.score < bound && leftRels > 0) {
                 
-        val realPoolSize = math.min(poolSize, orderedRels.length)        
-        val newFeatures = orderedRels.take(realPoolSize)
-                .map{ case (k, mi) => (k, criterionFactory.getCriterion.init(mi)) }
-                .toMap
-        
+        // Select a new subset to be added to the pool        
+        val realPoolSize = math.min(poolSize, leftRels)
+        var newFeatures = sc.parallelize(wholeSet.top(realPoolSize)(orderedByRelevance)).sortByKey()
+
         // do missed calculations (for each previously selected attribute)
-        val calcMI = IT.miAndCmi(data, _: Seq[Int], selected.map(_.feat), Some(label), nElements, nFeatures, isDense)
-        val missedMiAndCmi = calcMutualInformation(calcMI, newFeatures.keys.toSeq, miniBatchFraction)
+        val missedMiAndCmi = IT.miAndCmi(data, 
+        							newFeatures.map(_._1).collect, 
+        							selected.sortByKey().map(_._1).collect, 
+        							Some(label), 
+        							nElements, nFeatures, isDense)
+    							.map({ case ((x, _), crit) => (x, crit) })
+    							.groupByKey()
+		
+		newFeatures = newFeatures.leftOuterJoin(missedMiAndCmi).mapValues{
+					  	    case (crit, Some(it)) => 
+					  	      	for((mi, cmi) <- it) crit.update(mi, cmi)
+					  	      	crit
+					  	    case (crit, None) => crit
+		      		  }
         
-        missedMiAndCmi.foreach{ case ((feat, _), (mi, cmi)) => 
-            newFeatures.get(feat) match {
-              case Some(crit) => crit.update(mi, cmi)
-              case None => 
-            }     
-        }
+        // Add new features to the pool and remove them from the relevances set
+        pool = pool.union(newFeatures).sortByKey()
+        wholeSet = wholeSet.subtractByKey(newFeatures)
+        leftRels = leftRels - realPoolSize
         
-        // Add new features to the pool and remove them from the other set
-        pool ++= newFeatures.toSeq
-        orderedRels = orderedRels.drop(realPoolSize)
-        
-        // look for maximum
-        max = pool.maxBy(_._2.score)        
-        min = pool.minBy(_._2.relevance)._2.asInstanceOf[InfoThCriterion with Bound]
+        // calculate again maximum and bound
+        max = pool.max()(orderedByScore)
+        bound = pool.min()(orderedByRelevance)._2
+        			.asInstanceOf[InfoThCriterion with Bound].bound
       }
       
       // select feature
-      selected = F(max._1, max._2.score) +: selected
-      pool = pool - max._1
-      val strSelected = selected.reverse
-    	    .map({case F(f, c) => f + "\t" + "%.4f" format c})
+      lastSelected = (max._1, max._2.score)
+      val newSelected = sc.parallelize(Seq(lastSelected))
+	  selected = selected.union(newSelected)
+      pool = pool.subtractByKey(newSelected)
+      nSelected = nSelected + 1
+      
+      /*val strSelected = selected
+    	    .map({case (f, c) => f + "\t" + "%.4f" format c})
+    	    .collect
     	    .mkString("\n")
-      println("\n*** Selected features ***\nFeature\tScore\n" + strSelected)
-      println("Pool size: " + pool.size)
+      println("\n*** Selected features ***\nFeature\tScore\n" + strSelected)*/
     }
 
-    selected.reverse
+    selected
   }
-  
-  /**
-   * Transform discrete labeled input data in byte array data.
-   * 
-   * @param discData RDD of LabeledPoint. 
-   * @return RDD of byte array
-   * 
-   * Note: LabeledPoint must be integer values in double representation 
-   * with a maximum range value of 256. In this manner, data can be transformed
-   * to byte directly. 
-   */
-  private def discreteDataToByte(discData: RDD[LabeledPoint], nFeatures: Int): RDD[BV[Byte]] = {
-    val byteData: RDD[BV[Byte]] = discData.first().features match {
-      case _: SparseVector => 
-         discData.map({ case LabeledPoint(label, values) =>
-            val sv = values.asInstanceOf[SparseVector]
-            new BSV( 0 +: sv.indices.map(_ + 1), 
-                label.toByte +: sv.toArray.map(_.toByte), 
-                sv.size + 1)
-          })
-      case _: DenseVector =>
-        discData.map({ case LabeledPoint(label, values) => 
-            val sv = values.asInstanceOf[DenseVector]
-            new BDV(label.toByte +: sv.toArray.map(_.toByte))
-        })
-    }
-    
-    byteData
-  }  
-  
-  protected def run(nToSelect: Int, 
-      miniBatchFraction: Float): 
+
+  protected def run(nToSelect: Int,
+      poolSize: Int = 30): 
         InfoThFeatureSelectionModel = {
     
     if (nToSelect > nFeatures) {
       throw new IllegalArgumentException("data doesn't have so many features")
     }    
     
+    byteData.persist(StorageLevel.MEMORY_ONLY_SER)
+    
     val selected = criterionFactory.getCriterion match {
       case _: InfoThCriterion with Bound if poolSize != 0 =>
-        selectFeaturesWithPool(byteData, nToSelect, miniBatchFraction)
+        selectFeaturesWithPool(byteData, nToSelect, poolSize)
       case _: InfoThCriterion =>
-        selectFeaturesWithoutPool(byteData, nToSelect, miniBatchFraction)
-      case _ => Seq.empty[F]
+        selectFeaturesWithoutPool(byteData, nToSelect, poolSize)
     }
     
     byteData.unpersist()
     
     // Print best features according to the mRMR measure
-    val strMRMR = selected.map({case F(f, c) => f + "\t" + "%.4f" format c}).mkString("\n")
+    val strMRMR = selected.collect.map({case (f, c) => f + "\t" + "%.4f" format c}).mkString("\n")
     println("\n*** mRMR features ***\nFeature\tScore\n" + strMRMR)
 
-    new InfoThFeatureSelectionModel(selected.map({ case F(feat, rel) => (feat - 1, rel) }).toArray)
+    new InfoThFeatureSelectionModel(selected.map({ case (feat, rel) => (feat - 1, rel) }).toArray)
   }
 }
 
@@ -295,7 +294,6 @@ object InfoThFeatureSelection {
    * @param   data RDD of LabeledPoint (discrete data with a maximum range of 256).
    * @param   nToSelect maximum number of features to select
    * @param   poolSize number of features to be used in pool optimization in order to alleviate calculations.
-   * @param   miniBatchFraction Percentage of simultaneous features to calculate MI and CMI (just in case).
    * @return  InfoThFeatureSelectionModel a feature selection model which contains a subset of selected features
    * 
    * Note: LabeledPoint data must be integer values in double representation 
@@ -304,9 +302,8 @@ object InfoThFeatureSelection {
    */
   def train(criterionFactory: InfoThCriterionFactory,
       data: RDD[LabeledPoint],
-      nToSelect: Int,
-      poolSize: Int = 100,
-      miniBatchFraction: Float = 1.0f) = {
-    new InfoThFeatureSelection(criterionFactory, poolSize, data).run(nToSelect, miniBatchFraction)
+      nToSelect: Int = 100,
+      poolSize: Int = 100) = {
+    new InfoThFeatureSelection(criterionFactory, data).run(nToSelect, poolSize)
   }
 }

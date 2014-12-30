@@ -1,4 +1,4 @@
-package org.apache.spark.mllib.featureselection
+package org.lidiagroup.hmourit.tfg.featureselection
 
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.mllib.linalg.Vectors
