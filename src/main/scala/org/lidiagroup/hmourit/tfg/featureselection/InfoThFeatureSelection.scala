@@ -197,11 +197,13 @@ class InfoThFeatureSelection private (
           Some(label), nElements, nFeatures, isDense)
             .map({ case ((x, _), crit) => (x, crit) })
             
-	  pool = pool.leftOuterJoin(newMiAndCmi)
-  	  			.mapValues{
+        val c = newMiAndCmi.count
+        println("MI Size: " + c)
+        println("new MI: " + newMiAndCmi.collect.mkString("\n"))
+            
+	  pool = pool.leftOuterJoin(newMiAndCmi).mapValues{
 			  	    case (crit, Some((mi, cmi))) => 
 			  	      	crit.update(mi, cmi)
-			  	      	crit
 			  	    case (crit, None) => crit
 		      	}
 	  
@@ -209,9 +211,16 @@ class InfoThFeatureSelection private (
       max = pool.max()(orderedByScore)
       var bound = pool.min()(orderedByRelevance)._2
       		.asInstanceOf[InfoThCriterion with Bound].bound
+  		println("Max score0: " + (max._1, max._2.score))
+        println("Min bound0: " + bound)
+        println("Last selected0: " + lastSelected)
       
       // increase pool if necessary
       while (max._2.score < bound && leftRels > 0) {
+         
+        println("Max score: " + (max._1, max._2.score))
+        println("Min bound: " + bound)
+        println("Last selected: " + lastSelected)
         
         // Select a new subset to be added to the pool        
         val realPoolSize = math.min(poolSize, leftRels)
@@ -223,8 +232,8 @@ class InfoThFeatureSelection private (
         							selected.sortByKey().map(_._1).collect, 
         							Some(label), 
         							nElements, nFeatures, isDense)
-        							.map({ case ((x, _), crit) => (x, crit) })
-        							.groupByKey()
+									.map({ case ((x, _), crit) => (x, crit) })
+									.groupByKey()
 		
 		newFeatures = newFeatures.leftOuterJoin(missedMiAndCmi).mapValues{
 					  	    case (crit, Some(it)) => 
