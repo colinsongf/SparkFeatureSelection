@@ -88,9 +88,9 @@ class InfoThFeatureSelection private (
     
     // calculate relevance
     val MiAndCmi = if(isDense) 
-      IT.miAndCmi(data, 1 to nFeatures, Seq(label), None, nElements, nFeatures, isDense) 
+      IT.miAndCmi(data, 1 to nFeatures, Seq(label), None, nElements, nFeatures) 
     else
-      IT.miAndCmi(data, Seq(label), Seq(label), None, nElements, nFeatures)
+      IT.miAndCmi(data, Seq(label), Seq(label), None, nElements, nFeatures, true)
     
     // Init criterions and sort by key
     var pool = MiAndCmi
@@ -114,11 +114,11 @@ class InfoThFeatureSelection private (
       // update pool
       val newMiAndCmi = if(isDense) {
 		  IT.miAndCmi(data, pool.map(_._1).collect, Seq(lastSelected._1), 
-				  Some(label), nElements, nFeatures, isDense) 
+				  Some(label), nElements, nFeatures) 
 	  } else {
 		  // As label = 0, it is not necessary to sort
 		  val inverseX = label +: selected.sortByKey().map(_._1).collect
-		  IT.miAndCmi(data, inverseX, Seq(lastSelected._1), Some(label), nElements, nFeatures)
+		  IT.miAndCmi(data, inverseX, Seq(lastSelected._1), Some(label), nElements, nFeatures, true)
 	  }	  	
       
   	  // Update criterions in the pool
@@ -165,9 +165,9 @@ class InfoThFeatureSelection private (
     
     // calculate relevance
     val MiAndCmi = if(isDense) 
-      IT.miAndCmi(data, 1 to nFeatures, Seq(label), None, nElements, nFeatures, isDense) 
+      IT.miAndCmi(data, 1 to nFeatures, Seq(label), None, nElements, nFeatures) 
     else
-      IT.miAndCmi(data, Seq(label), Seq(label), None, nElements, nFeatures)
+      IT.miAndCmi(data, Seq(label), Seq(label), None, nElements, nFeatures, true)
     var wholeSet = MiAndCmi.map({ case ((k, _), (mi, _)) => (k, criterionFactory.getCriterion.init(mi)) })
 	        
     // Print most relevant features
@@ -194,7 +194,7 @@ class InfoThFeatureSelection private (
 
       // update pool (varX must be sorted)
       val newMiAndCmi = IT.miAndCmi(data, pool.map(_._1).collect, Seq(lastSelected._1), 
-          Some(label), nElements, nFeatures, isDense)
+          Some(label), nElements, nFeatures)
             .map({ case ((x, _), crit) => (x, crit) })
             
         val c = newMiAndCmi.count
@@ -231,7 +231,7 @@ class InfoThFeatureSelection private (
         							newFeatures.map(_._1).collect, 
         							selected.sortByKey().map(_._1).collect, 
         							Some(label), 
-        							nElements, nFeatures, isDense)
+        							nElements, nFeatures)
 									.map({ case ((x, _), crit) => (x, crit) })
 									.groupByKey()
 		
