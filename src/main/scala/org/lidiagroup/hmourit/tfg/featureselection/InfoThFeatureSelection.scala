@@ -180,8 +180,8 @@ class InfoThFeatureSelection private (
     val initialPoolSize = math.max(poolSize, nToSelect)
     // var indixes must be sorted before applying MI function
     var pool = sc.parallelize(wholeSet.top(initialPoolSize)(orderedByRelevance)).sortByKey()
-	wholeSet = wholeSet.subtractByKey(pool)
-	var leftRels = nFeatures - initialPoolSize
+	  wholeSet = wholeSet.subtractByKey(pool)
+	  var leftRels = nFeatures - initialPoolSize
 
     // select feature with the maximum relevance
     var max = pool.max()(orderedByScore)
@@ -201,7 +201,7 @@ class InfoThFeatureSelection private (
         println("MI Size: " + c)
         println("new MI: " + newMiAndCmi.collect.mkString("\n"))
             
-	  pool = pool.leftOuterJoin(newMiAndCmi).mapValues{
+	    pool = pool.leftOuterJoin(newMiAndCmi).mapValues{
 			  	    case (crit, Some((mi, cmi))) => 
 			  	      	crit.update(mi, cmi)
 			  	    case (crit, None) => crit
@@ -235,7 +235,7 @@ class InfoThFeatureSelection private (
 									.map({ case ((x, _), crit) => (x, crit) })
 									.groupByKey()
 		
-		newFeatures = newFeatures.leftOuterJoin(missedMiAndCmi).mapValues{
+		    newFeatures = newFeatures.leftOuterJoin(missedMiAndCmi).mapValues{
 					  	    case (crit, Some(it)) => 
 					  	      	for((mi, cmi) <- it) crit.update(mi, cmi)
 					  	      	crit
@@ -259,6 +259,7 @@ class InfoThFeatureSelection private (
 	  selected = selected.union(newSelected)
       pool = pool.subtractByKey(newSelected)
       nSelected = nSelected + 1
+      
       
       /*val strSelected = selected
     	    .map({case (f, c) => f + "\t" + "%.4f" format c})
