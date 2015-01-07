@@ -113,13 +113,13 @@ class InfoThFeatureSelection private (
     while (nSelected < nToSelect) {
       // update pool
       val newMiAndCmi = if(isDense) {
-		  IT.miAndCmi(data, pool.map(_._1).collect, Seq(lastSelected._1), 
-				  Some(label), nElements, nFeatures) 
-	  } else {
-		  // As label = 0, it is not necessary to sort
-		  val inverseX = label +: selected.sortByKey().map(_._1).collect
-		  IT.miAndCmi(data, inverseX, Seq(lastSelected._1), Some(label), nElements, nFeatures, true)
-	  }	  	
+  		  IT.miAndCmi(data, pool.map(_._1).collect, Seq(lastSelected._1), 
+  				  Some(label), nElements, nFeatures) 
+  	  } else {
+  		  // As label = 0, it is not necessary to sort
+  		  val inverseX = label +: selected.sortByKey().map(_._1).collect
+  		  IT.miAndCmi(data, inverseX, Seq(lastSelected._1), Some(label), nElements, nFeatures, true)
+  	  }	  	
       
   	  // Update criterions in the pool
   	  pool = pool.leftOuterJoin(newMiAndCmi.map({ case ((x, _), crit) => (x, crit) }))

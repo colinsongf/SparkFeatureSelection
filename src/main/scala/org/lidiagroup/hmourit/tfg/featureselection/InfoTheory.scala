@@ -126,8 +126,6 @@ object InfoTheory {
             }
        }
        
-       
-       
        combinations      
     }
   
@@ -155,47 +153,6 @@ object InfoTheory {
        pairs
     } 
     
-    /**
-   * Calculates mutual information (MI) and conditional mutual information (CMI) simultaneously
-   * for several variables (X's) with others (Y's), conditioned by an optional variable Z. 
-   * Indexes must be disjoint.
-   *
-   * @param data RDD of data containing the variables (first element is the class attribute)
-   * @param invX Inverse set of selected X variables (used to alleviate the performance in case of big dimensions)
-   * @param varY Indexes of the second variable (must be sorted and disjoint with X and Z)
-   * @param varZ Indexes of the conditioning values (disjoint with X and Y)
-   * @param n    Number of instances
-   * @return     RDD of (variable, (MI, CMI))
-   */
-  def miAndCmi(
-      data: RDD[BV[Byte]],
-      invX: Seq[Int],
-      varY: Seq[Int],
-      varZ: Option[Int],
-      n: Long,      
-      nFeatures: Int) = {
-    
-    // Pre-requisites
-    val sparse = data.first match {
-    	case v: BSV[Byte] => true
-    	case v: BDV[Byte] => false
-    }
-    require(varY.size > 0 && sparse)
-
-    // Broadcast variables
-    val sc = data.context
-    val binvX = sc.broadcast(invX)
-    val bvarY = sc.broadcast(varY)
-    val bvarZ = sc.broadcast(varZ)
-    
-    /* Common function to generate pairs, it choose between sparse and dense fetch 
-     * (full or indexed, respectively)
-     */
-    val finvX = sc.broadcast(!SU.binarySearch(binvX.value, _: Int))
-    val combGenerator = SparseGenerator(_: BV[Byte], finvX, bvarY, bvarZ)    
-    
-	 calculateMISparseData(data, combGenerator,varY(0), n)
-  }
   
   /**
    * Calculates mutual information (MI) and conditional mutual information (CMI) simultaneously
@@ -215,8 +172,8 @@ object InfoTheory {
       varY: Seq[Int],
       varZ: Option[Int],
       n: Long,      
-      nFeatures: Int,
-      denseData: Boolean) = {
+      nFeatures: Int, 
+      inverseX: Boolean = false) = {
     
     // Pre-requisites
     require(varX.size > 0 && varY.size > 0)
@@ -230,23 +187,30 @@ object InfoTheory {
     /* Common function to generate pairs, it choose between sparse and dense fetch 
      * (full or indexed, respectively)
      */
-    denseData match {
-      case true =>
+    data.first() match {
+      case v: BDV[Byte] =>
 	    val generator = DenseGenerator(_: BV[Byte], bvarX, bvarY, bvarZ)
 	    calculateMIDenseData(data, generator, varY(0), n)
-      case false =>        
-        val bfX = sc.broadcast(SU.binarySearch(bvarX.value, _: Int))
+      case v: BSV[Byte] =>        
+        val bfX = 
+          if(inverseX) 
+            sc.broadcast(!SU.binarySearch(bvarX.value, _: Int))
+          else 
+            sc.broadcast(SU.binarySearch(bvarX.value, _: Int))
+          
         val combGenerator = SparseGenerator(_: BV[Byte], bfX, bvarY, bvarZ)
         calculateMISparseData(data, combGenerator, varY(0), n)
     }
   }
   
   private def calculateMISparseData(data: RDD[BV[Byte]],
-      combanationGenerator: BV[Byte] => Seq[((Any, Byte, Any), (scala.collection.immutable.Set[_], Long))],
+      combGenerator: BV[Byte] => Seq[((Any, Byte, Any), (scala.collection.immutable.Set[_], Long))],
       firstY: Int,
       n: Long) = {
 	
-		val combinations = data.flatMap(combanationGenerator)
+		val combinations = data.flatMap(combGenerator)
+    
+    println("Comb size: " + combinations.count())
 					            
 	    // Count frequencies for each combination
 	    val grouped_frequencies =
