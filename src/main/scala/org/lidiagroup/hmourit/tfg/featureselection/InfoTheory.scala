@@ -82,7 +82,7 @@ object InfoTheory {
        }
        
        /* Generate combinations */
-       zVal match {
+     zVal match {
    		case Some(z) => 
             var xycomb = Seq.empty[(Int, Byte, Int, Byte)]
    		  		for((xind, x) <- xValues){
@@ -101,7 +101,7 @@ object InfoTheory {
             }
             
             for((yind, y) <- yValues){
-              val xset = yValues.toSet
+              val xset = xValues.toSet
               combinations = ((yind, 7:Byte /*"y"*/, y), (xset, 1L)) +: combinations
               combinations = ((yind, 2:Byte /*"yz"*/ , (y, z)), (xset, 1L)) +: combinations
             }
@@ -121,7 +121,7 @@ object InfoTheory {
             }
             
             for((yind, y) <- yValues){
-              val xset = yValues.toSet
+              val xset = xValues.toSet
               combinations = ((yind, 7:Byte /*"y"*/, y), (xset, 1L)) +: combinations
             }
        }
@@ -192,11 +192,7 @@ object InfoTheory {
 	    val generator = DenseGenerator(_: BV[Byte], bvarX, bvarY, bvarZ)
 	    calculateMIDenseData(data, generator, varY(0), n)
       case v: BSV[Byte] =>        
-        val bfX = 
-          if(inverseX) 
-            sc.broadcast(!SU.binarySearch(bvarX.value, _: Int))
-          else 
-            sc.broadcast(SU.binarySearch(bvarX.value, _: Int))
+        val bfX = if(inverseX) sc.broadcast(!SU.binarySearch(bvarX.value, _: Int)) else sc.broadcast(SU.binarySearch(bvarX.value, _: Int))
           
         val combGenerator = SparseGenerator(_: BV[Byte], bfX, bvarY, bvarZ)
         calculateMISparseData(data, combGenerator, varY(0), n)
@@ -210,7 +206,8 @@ object InfoTheory {
 	
 		val combinations = data.flatMap(combGenerator)
     
-    println("Comb size: " + combinations.count())
+    //println("Comb size: " + combinations.count())
+    //println("Top comb: " + combinations.take(100).mkString("\n"))
 					            
 	    // Count frequencies for each combination
 	    val grouped_frequencies =
@@ -254,6 +251,7 @@ object InfoTheory {
 	      // Group by origin
 	      .combineByKey(createCombiner, mergeValues, mergeCombiners)
 	      
+        //println("Top gfreq: " + grouped_frequencies.take(100).mkString("\n"))
 	    grouped_frequencies.map({
 	      case ((k, _, _, z), (qxz, qyz, qxyz, qz, qxy, qx, qy)) =>
 	        // Select id
