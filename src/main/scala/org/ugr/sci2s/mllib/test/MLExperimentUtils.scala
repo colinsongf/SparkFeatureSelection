@@ -19,7 +19,6 @@ import org.apache.spark.storage.StorageLevel
 import org.apache.spark.mllib.util.MLUtils
 import org.lidiagroup.hmourit.tfg.featureselection.FeatureSelectionModel
 import org.lidiagroup.hmourit.tfg.featureselection.InfoThFeatureSelectionModel
-import org.ugr.sci2s.mllib.test.KeelParser
 
 object MLExperimentUtils {
   

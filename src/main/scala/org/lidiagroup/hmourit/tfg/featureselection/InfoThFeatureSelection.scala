@@ -178,7 +178,7 @@ class InfoThFeatureSelection private (
     // extract pool
     val initialPoolSize = math.max(poolSize, nToSelect)
     // var indixes must be sorted before applying MI function
-    var pool = sc.parallelize(wholeSet.top(initialPoolSize)(orderedByRelevance))
+    var pool = sc.parallelize(wholeSet.top(initialPoolSize)(orderedByRelevance)).sortByKey()
 	  wholeSet = wholeSet.subtractByKey(pool)
 	  var leftRels = nFeatures - initialPoolSize
 
@@ -186,30 +186,19 @@ class InfoThFeatureSelection private (
     var max = pool.max()(orderedByScore)
     var lastSelected = (max._1, max._2.score)
     var selected = sc.parallelize(Seq(lastSelected))
-    pool = pool.subtractByKey(selected)
-    val str2 = pool.take(20).mkString(",")
-    println("First Pool: " + str2)
+    pool = pool.filter{case (k, _) => k != max._1}
+    //pool = pool.subtractByKey(selected)
     var nSelected = 1
     
     while (nSelected < nToSelect) {
 
       // update pool (varX must be sorted)
       val newMiAndCmi = IT.miAndCmi(data, 
-          pool.sortByKey().map(_._1).collect, 
+          pool.map(_._1).collect, 
           Seq(lastSelected._1), 
           Some(label), 
           nElements, 
           nFeatures).map({ case ((x, _), crit) => (x, crit) })
-        
-        val str2 = pool.take(20).mkString(",")
-        val c = newMiAndCmi.count
-        val str = newMiAndCmi.collect.mkString("\n")
-        
-        println("Last selected: " + lastSelected._1)
-        println("Pool: " + str2)
-        println("new MI Size: " + c)
-        println("new MI: " + str)
-        
             
 	    pool = pool.leftOuterJoin(newMiAndCmi).mapValues{
 			  	      case (crit, Some((mi, cmi))) => crit.update(mi, cmi)
@@ -220,16 +209,9 @@ class InfoThFeatureSelection private (
       max = pool.max()(orderedByScore)
       var bound = pool.min()(orderedByRelevance)._2
     		    .asInstanceOf[InfoThCriterion with Bound].bound
-  		println("Max score0: " + (max._1, max._2.score))
-        println("Min bound0: " + bound)
-        println("Last selected0: " + lastSelected)
-      
+            
       // increase pool if necessary
       while (max._2.score < bound && leftRels > 0) {
-         
-        println("Max score: " + (max._1, max._2.score))
-        println("Min bound: " + bound)
-        println("Last selected: " + lastSelected)
         
         // Select a new subset to be added to the pool        
         val realPoolSize = math.min(poolSize, leftRels)
@@ -250,10 +232,10 @@ class InfoThFeatureSelection private (
 					  	      	for((mi, cmi) <- it) crit.update(mi, cmi)
 					  	      	crit
 					  	    case (crit, None) => crit
-		      		  }
+  		  }
         
         // Add new features to the pool and remove them from the relevances set
-        pool = pool.union(newFeatures)
+        pool = pool.union(newFeatures).sortByKey()
         wholeSet = wholeSet.subtractByKey(newFeatures)
         leftRels = leftRels - realPoolSize
         
@@ -267,7 +249,8 @@ class InfoThFeatureSelection private (
       lastSelected = (max._1, max._2.score)
       val newSelected = sc.parallelize(Seq(lastSelected))
 	    selected = selected.union(newSelected)
-      pool = pool.subtractByKey(newSelected)
+      //pool = pool.subtractByKey(newSelected)
+      pool = pool.filter{case (k, _) => k != max._1}
       nSelected = nSelected + 1
       
       /*val strSelected = selected

@@ -48,10 +48,11 @@ object InfoTheory {
     }
   
     /* Pair generator for sparse data */
-  	private def SparseGenerator(v: BV[Byte], 
-  	    fx: Broadcast[Int => Boolean],
+  	private def SparseGenerator(v: BV[Byte],
+        varX: Broadcast[Seq[Int]],
         varY: Broadcast[Seq[Int]],
-        varZ: Broadcast[Option[Int]]) =  {
+        varZ: Broadcast[Option[Int]],
+        inverse: Boolean) =  {
       
        val sv = v.asInstanceOf[BSV[Byte]]
        val (withZ, zind) = varZ.value match {
@@ -62,6 +63,10 @@ object InfoTheory {
        var zVal: Option[Byte] = None
        var xValues = Seq.empty[(Int, Byte)]
        var yValues = Seq.empty[(Int, Byte)]
+       val fx = if(inverse) 
+         !SU.binarySearch(varX.value, _: Int) 
+       else
+         SU.binarySearch(varX.value, _: Int)
        
        // Generate pairs using X and Y values generated before
        var combinations = Seq.empty[((Any, Byte, Any), (scala.collection.immutable.Set[_], Long))]       
@@ -76,7 +81,7 @@ object InfoTheory {
             } else if (SU.binarySearch(varY.value, index)) {
               yValues = (index, value) +: yValues
             // This X index is involved in calculation?
-            } else if (fx.value(index)) {
+            } else if (fx(index)) {
               xValues = (index, value) +: xValues
             }
        }
@@ -192,9 +197,9 @@ object InfoTheory {
 	    val generator = DenseGenerator(_: BV[Byte], bvarX, bvarY, bvarZ)
 	    calculateMIDenseData(data, generator, varY(0), n)
       case v: BSV[Byte] =>        
-        val bfX = if(inverseX) sc.broadcast(!SU.binarySearch(bvarX.value, _: Int)) else sc.broadcast(SU.binarySearch(bvarX.value, _: Int))
+        //val bfX = if(inverseX) sc.broadcast(!SU.binarySearch(bvarX.value, _: Int)) else sc.broadcast(SU.binarySearch(bvarX.value, _: Int))
           
-        val combGenerator = SparseGenerator(_: BV[Byte], bfX, bvarY, bvarZ)
+        val combGenerator = SparseGenerator(_: BV[Byte], bvarX, bvarY, bvarZ, inverseX)
         calculateMISparseData(data, combGenerator, varY(0), n)
     }
   }

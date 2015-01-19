@@ -35,7 +35,7 @@ object MainMLlibTest {
 		val sc = new SparkContext(conf)
 
 		println("Usage: MLlibTest --header-file=\"hdfs://\" (--train-file=\"hdfs://\" --test-file=\"hdfs://\" " 
-		    + "| --data-dir=\"hdfs://\") --output-dir=\"hdfs:\\ --disc=yes [ --disc-nbis=10 --save-disc=yes ] --fs=yes [ --fs-criterion=mrmr "
+		    + "| --data-dir=\"hdfs://\") --output-dir=\"hdfs:\\ --disc=yes [ --disc-nbins=10 --save-disc=yes ] --fs=yes [ --fs-criterion=mrmr "
 		    + "--fs-nfeat=100 --fs-npool=30 --save-fs=yes ] --file-format=LibSVM|KEEL --data-format=sparse|dense "
         + "--classifier=no|SVM|NB|LR [ --cls-lambda=1.0 --cls-numIter=1 --cls-stepSize = 1.0"
 		    + "--cls-regParam=1.0 --cls-miniBatchFraction=1.0 ]")
@@ -61,15 +61,16 @@ object MainMLlibTest {
 		
 		// Discretization
 		val disc = (train: RDD[LabeledPoint]) => {
-			val ECBDLRangeContFeatures = (0 to 2) ++ (21 to 38) ++ (93 to 130) ++ (151 to 630)
+			//val discretizedFeat = Some(((0 to 2) ++ (21 to 38) ++ (93 to 130) ++ (151 to 630)).toSeq)
+      val discretizedFeat: Option[Seq[Int]] = None
 			val nBins = MLEU.toInt(params.getOrElse("disc-nbins", "10"), 10)
 
 			println("*** Discretization method: Fayyad discretizer (MDLP)")
-			println("*** Features to discretize: " + ECBDLRangeContFeatures.mkString(","))
+			println("*** Features to discretize: " + discretizedFeat.get.mkString(","))
 			println("*** Number of bins: " + nBins)			
 
 			val discretizer = EntropyMinimizationDiscretizer.train(train,
-					Some(ECBDLRangeContFeatures), // continuous features 
+					discretizedFeat, // continuous features 
 					nBins) // max number of values per feature
 		    discretizer
 		}
