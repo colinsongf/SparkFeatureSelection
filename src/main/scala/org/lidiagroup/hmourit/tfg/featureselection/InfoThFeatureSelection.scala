@@ -106,7 +106,7 @@ class InfoThFeatureSelection private (
     val max = pool.max()(orderedByScore)
     var lastSelected = (max._1, max._2.score)
     var selected = sc.parallelize(Seq(lastSelected))
-    pool = pool.subtractByKey(selected)
+    pool = pool.subtractByKey(selected) // pool do not need to be sorted
     var nSelected = 1
     
     while (nSelected < nToSelect) {
@@ -186,15 +186,15 @@ class InfoThFeatureSelection private (
     var max = pool.max()(orderedByScore)
     var lastSelected = (max._1, max._2.score)
     var selected = sc.parallelize(Seq(lastSelected))
-    pool = pool.filter{case (k, _) => k != max._1}
-    //pool = pool.subtractByKey(selected)
+    //pool = pool.filter{case (k, _) => k != max._1}
+    pool = pool.subtractByKey(selected)
     var nSelected = 1
     
     while (nSelected < nToSelect) {
 
       // update pool (varX must be sorted)
       val newMiAndCmi = IT.miAndCmi(data, 
-          pool.map(_._1).collect, 
+          pool.sortByKey().map(_._1).collect, 
           Seq(lastSelected._1), 
           Some(label), 
           nElements, 
@@ -249,8 +249,8 @@ class InfoThFeatureSelection private (
       lastSelected = (max._1, max._2.score)
       val newSelected = sc.parallelize(Seq(lastSelected))
 	    selected = selected.union(newSelected)
-      //pool = pool.subtractByKey(newSelected)
-      pool = pool.filter{case (k, _) => k != max._1}
+      pool = pool.subtractByKey(newSelected)
+      //pool = pool.filter{case (k, _) => k != max._1}
       nSelected = nSelected + 1
       
       /*val strSelected = selected
