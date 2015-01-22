@@ -56,16 +56,16 @@ class EntropyMinimizationDiscretizer private (
 	    // (Pre-processing) Count the number of features and what attributes are continuous
 	  	contFeat match {
 	  	  	case Some(s) => 
-			  // Attributes are in range 0..nfeat
-			  val intersect = (0 until nFeatures).seq.intersect(s)
-			  require(intersect.size == s.size)
-			  s
-	    	case None =>     	  
-	    	  val cvars = calcRawData.countByKey()
-		  		.filter{case (k, c) => c > maxLimitBins}
-		  		.keys
-		  		.toSeq
-	  		  cvars  		  
+    			  // Attributes are in range 0..nfeat
+    			  val intersect = (0 until nFeatures).seq.intersect(s)
+    			  require(intersect.size == s.size)
+    			  s
+  	    	case None =>     	  
+  	    	  val cvars = calcRawData.distinct.countByKey()
+    		  		.filter{case (k, c) => c > maxLimitBins}
+    		  		.keys
+    		  		.toSeq
+  	  		  cvars  		  
 	    }
   }
   
