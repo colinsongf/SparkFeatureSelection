@@ -66,7 +66,7 @@ object MainMLlibTest {
 			val nBins = MLEU.toInt(params.getOrElse("disc-nbins", "10"), 10)
 
 			println("*** Discretization method: Fayyad discretizer (MDLP)")
-			println("*** Features to discretize: " + discretizedFeat.get.mkString(","))
+			//println("*** Features to discretize: " + discretizedFeat.get.mkString(","))
 			println("*** Number of bins: " + nBins)			
 
 			val discretizer = EntropyMinimizationDiscretizer.train(train,
