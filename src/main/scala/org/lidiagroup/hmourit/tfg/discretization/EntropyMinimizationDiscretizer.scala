@@ -469,7 +469,7 @@ class EntropyMinimizationDiscretizer private (
       
     	// Get only boundary points from the whole set of distinct values
       val initialCandidates = initialThresholds(sortedValues, firstElements)
-            .map{case ((k, point), c) => (k, (point, c))}
+            .map{case ((k, point), c) => (k, (point, c))}.cache()
       
       // Divide RDD according to the number of candidates
       val bigIndexes = initialCandidates
@@ -490,15 +490,16 @@ class EntropyMinimizationDiscretizer private (
       val smallThresholds = smallCandidatesByAtt
             .mapValues(points => getThresholds(points.toArray.sortBy(_._1), maxBins))
   
-      val bigCandsByAtt = bigCandidates.keys.distinct.map{k1 =>
-                (k1, bigCandidates.filter{case (k2, _) => k1 == k2}.values.sortByKey())
+      val bigInds = bigCandidates.keys.distinct.collect
+      println("Number of big features:\t" + bigInds.size)
+      val bigThresholds = bigInds.map{ k => 
+                  val cands = bigCandidates.filter{case (k2, _) => k == k2}.values.sortByKey()
+                  (k, getThresholds(cands, maxBins, elementsPerPartition))
               }
   
-      val bigThresholds = for((k, cands) <- bigCandsByAtt)
-            yield (k, getThresholds(cands, maxBins, elementsPerPartition))
-  
       // Join the thresholds and return them
-      val thresholds = smallThresholds.union(bigThresholds)
+      val bigThRDD = sc.parallelize(bigThresholds.toSeq)
+      val thresholds = smallThresholds.union(bigThRDD)
                           .filter{case (k, arr) => arr.size > 2} // more than +/- Infinity
                           .sortByKey()
                           .collect
