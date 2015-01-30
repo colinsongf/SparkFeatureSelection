@@ -22,7 +22,7 @@ class EntropyMinimizationDiscretizer private (
   //private val partitions = { x: Long => math.ceil(x.toDouble / elementsPerPartition).toInt }
   private val log2 = { x: Double => math.log(x) / math.log(2) }  
   private val isBoundary = (f1: Array[Long], f2: Array[Long]) => {
-	  	(f1, f2).zipped.map(_ + _).filter(_ != 0).size > 1
+      (f1, f2).zipped.map(_ + _).filter(_ != 0).size > 1
   }
   private val maxLimitBins = Byte.MaxValue - Byte.MinValue + 1
   private val maxCandidates = 1e5
@@ -39,34 +39,34 @@ class EntropyMinimizationDiscretizer private (
    */  
   private def processContinuousAttributes(contFeat: Option[Seq[Int]], nFeatures: Int, dense: Boolean) = {
         // Function to calculate pairs according to the data format.
-	    def calcRawData = {
-		    dense match {
-		      case true =>
-				data.flatMap({case LabeledPoint(label, values) =>
-		  			for(k <- 0 until values.toArray.length) yield (k, values.toArray(k))
-				})
-		      case false =>
-		  		data.flatMap({case LabeledPoint(label, values) =>
-	  		  		val v = values.asInstanceOf[SparseVector]
-		  		  	for(i <- 0 until v.indices.size) yield (v.indices(i), v.values(i))
-		  		})
-		    }    
-	    }
-	    
-	    // (Pre-processing) Count the number of features and what attributes are continuous
-	  	contFeat match {
-	  	  	case Some(s) => 
-    			  // Attributes are in range 0..nfeat
-    			  val intersect = (0 until nFeatures).seq.intersect(s)
-    			  require(intersect.size == s.size)
-    			  s
-  	    	case None =>     	  
-  	    	  val cvars = calcRawData.distinct.countByKey()
-    		  		.filter{case (k, c) => c > maxLimitBins}
-    		  		.keys
-    		  		.toSeq
-  	  		  cvars  		  
-	    }
+      def calcRawData = {
+        dense match {
+          case true =>
+            data.flatMap({case LabeledPoint(label, values) =>
+                for(k <- 0 until values.toArray.length) yield (k, values.toArray(k))
+            })
+          case false =>
+            data.flatMap({case LabeledPoint(label, values) =>
+                val v = values.asInstanceOf[SparseVector]
+                for(i <- 0 until v.indices.size) yield (v.indices(i), v.values(i))
+            })
+        }    
+      }
+      
+      // (Pre-processing) Count the number of features and what attributes are continuous
+      contFeat match {
+          case Some(s) => 
+            // Attributes are in range 0..nfeat
+            val intersect = (0 until nFeatures).seq.intersect(s)
+            require(intersect.size == s.size)
+            s
+          case None =>        
+            val cvars = calcRawData.distinct.countByKey()
+              .filter{case (k, c) => c > maxLimitBins}
+              .keys
+              .toSeq
+            cvars       
+      }
   }
   
   /**
@@ -78,96 +78,96 @@ class EntropyMinimizationDiscretizer private (
   private def initialThresholds(
       points: RDD[((Int, Double), Array[Long])], 
       firstElements: Array[Option[(Int, Double)]]) = {
-	  
+    
     val numPartitions = points.partitions.length
-    val bcFirsts = points.context.broadcast(firstElements)   		
+    val bcFirsts = points.context.broadcast(firstElements)      
 
     points.mapPartitionsWithIndex({ (index, it) =>
       
-    	if(it.hasNext) {
-	
-	  		var ((lastK, lastX), lastFreqs) = it.next()
-		  	var result = Seq.empty[((Int, Double), Array[Long])]
-			  var accumFreqs = lastFreqs
-			
-  			for (((k, x), freqs) <- it) {		        
-  		          if(k != lastK) {
-  		        	  // new attribute: add last point from the previous one
-  		        	  result = ((lastK, lastX), accumFreqs.clone) +: result
-  		        	  accumFreqs = Array.fill(nLabels)(0L)
-  		          } else if(isBoundary(freqs, lastFreqs)) {
-  		        	  // new boundary point (mid point between this and the previous one)
-  		        	  result = ((lastK, (x + lastX) / 2), accumFreqs.clone) +: result
-  		        	  accumFreqs = Array.fill(nLabels)(0L)
-  		          }
-  		          
-  		          lastK = k
-  		          lastX = x
-  				  lastFreqs = freqs
-  				  accumFreqs = (accumFreqs, freqs).zipped.map(_ + _)
-  			}
-		   
-	  		// Last point to end the set
-	  		val lastPoint = if(index < (numPartitions - 1)) {
-		  			bcFirsts.value(index + 1) match {
-						case Some((k, x)) => 
-							if(k != lastK) lastX else (x + lastX) / 2 
-						case None => lastX // last point
-	  				}
-	  			}else{
-	  				lastX // last partition
-	  			} 
-		      					
-	      (((lastK, lastPoint), accumFreqs.clone) +: result).reverse.toIterator
-      	} else {
-      		Iterator.empty
-      	}      	      
+      if(it.hasNext) {
+  
+        var ((lastK, lastX), lastFreqs) = it.next()
+        var result = Seq.empty[((Int, Double), Array[Long])]
+        var accumFreqs = lastFreqs
+      
+        for (((k, x), freqs) <- it) {           
+                if(k != lastK) {
+                  // new attribute: add last point from the previous one
+                  result = ((lastK, lastX), accumFreqs.clone) +: result
+                  accumFreqs = Array.fill(nLabels)(0L)
+                } else if(isBoundary(freqs, lastFreqs)) {
+                  // new boundary point (mid point between this and the previous one)
+                  result = ((lastK, (x + lastX) / 2), accumFreqs.clone) +: result
+                  accumFreqs = Array.fill(nLabels)(0L)
+                }
+                
+                lastK = k
+                lastX = x
+            lastFreqs = freqs
+            accumFreqs = (accumFreqs, freqs).zipped.map(_ + _)
+        }
+       
+        // Last point to end the set
+        val lastPoint = if(index < (numPartitions - 1)) {
+            bcFirsts.value(index + 1) match {
+            case Some((k, x)) => 
+              if(k != lastK) lastX else (x + lastX) / 2 
+            case None => lastX // last point
+            }
+          }else{
+            lastX // last partition
+          } 
+                    
+        (((lastK, lastPoint), accumFreqs.clone) +: result).reverse.toIterator
+        } else {
+          Iterator.empty
+        }             
     })
   }
-  	/**
-	 * Calculates class frequencies for each distinct point in the dataset
-	 * @param data RDD of (value, label) pairs.
-	 * @param nLabels Number of distinct labels in the dataset.
-	 * @return RDD of (point, class frequencies) pairs.
-	 *
-	 */
+    /**
+   * Calculates class frequencies for each distinct point in the dataset
+   * @param data RDD of (value, label) pairs.
+   * @param nLabels Number of distinct labels in the dataset.
+   * @return RDD of (point, class frequencies) pairs.
+   *
+   */
   private def countFrequencies(
     data: RDD[(Double, Int)],
- 	nLabels: Int) = {
+  nLabels: Int) = {
 
-	  data.mapPartitions({ it =>
-	
-		  def countFreq(
-				  it: Iterator[(Double, Int)],
-				  lastX: Double,
-				  accumFreqs: Array[Long]): Seq[(Double, Array[Long])] = {
-	
-				  if (it.hasNext) {
-					  val (x, y) = it.next()
-					  if (x == lastX) {
-					  // same point than previous
-						  accumFreqs(y) += 1L
-						  countFreq(it, x, accumFreqs)
-					  } else {
-						  // new point
-						  val newAccum = Array.fill[Long](nLabels)(0L)
-						  newAccum(y) += 1L
-						  (lastX, accumFreqs.clone) +: countFreq(it, x, newAccum)
-					  }
-				  } else {
-					  Seq((lastX, accumFreqs))
-				  }
-		  }
-	
-		  if (it.hasNext) {
-			  val (firstX, firstY) = it.next() // first element
-			  val accumFreqs = Array.fill[Long](nLabels)(0L)
-			  accumFreqs(firstY) += 1L
-			  countFreq(it, firstX, accumFreqs).toIterator
-		  } else {
-			  Iterator.empty
-		  }
-	  }, preservesPartitioning = true)
+    data.mapPartitions({ it =>
+  
+      def countFreq(
+          it: Iterator[(Double, Int)],
+          lastX: Double,
+          accumFreqs: Array[Long]): Seq[(Double, Array[Long])] = {
+  
+          if (it.hasNext) {
+            val (x, y) = it.next()
+            if (x == lastX) {
+            // same point than previous
+              accumFreqs(y) += 1L
+              countFreq(it, x, accumFreqs)
+            } else {
+              // new point
+              val newAccum = Array.fill[Long](nLabels)(0L)
+              newAccum(y) += 1L
+              (lastX, accumFreqs.clone) +: countFreq(it, x, newAccum)
+            }
+          } else {
+            Seq((lastX, accumFreqs))
+          }
+      }
+  
+      if (it.hasNext) {
+        val (firstX, firstY) = it.next() // first element
+        val accumFreqs = Array.fill[Long](nLabels)(0L)
+        accumFreqs(firstY) += 1L
+        countFreq(it, firstX, accumFreqs).toIterator
+      } else {
+        Iterator.empty
+      }
+    }, preservesPartitioning = true)
 
   } 
   
@@ -184,7 +184,7 @@ class EntropyMinimizationDiscretizer private (
     val partitions = { x: Long => math.ceil(x.toDouble / elementsPerPartition).toInt }
     
     // Create queue
-	val stack = new mutable.Queue[((Double, Double), Option[Double])]
+    val stack = new mutable.Queue[((Double, Double), Option[Double])]
 
     // Insert the extreme values in the stack
     stack.enqueue(((Double.NegativeInfinity, Double.PositiveInfinity), None))
@@ -347,17 +347,17 @@ class EntropyMinimizationDiscretizer private (
     
     // Calculate total frequencies by label
     val totals = candidates
-    		.map(_._2)
-    		.reduce((freq1, freq2) => (freq1, freq2).zipped.map(_ + _))
+        .map(_._2)
+        .reduce((freq1, freq2) => (freq1, freq2).zipped.map(_ + _))
     
     // Calculate partial frequencies (left and right to the candidate) by label
     var leftAccum = Array.fill(nLabels)(0L)
     var entropyFreqs = Seq.empty[(Double, Array[Long], Array[Long], Array[Long])]
     for(i <- 0 until candidates.size) {
-    	val (cand, freq) = candidates(i)
-    	leftAccum = (leftAccum, freq).zipped.map(_ + _)
-    	val rightTotal = (totals, leftAccum).zipped.map(_ - _)
-    	entropyFreqs = (cand, freq, leftAccum.clone, rightTotal) +: entropyFreqs
+      val (cand, freq) = candidates(i)
+      leftAccum = (leftAccum, freq).zipped.map(_ + _)
+      val rightTotal = (totals, leftAccum).zipped.map(_ - _)
+      entropyFreqs = (cand, freq, leftAccum.clone, rightTotal) +: entropyFreqs
     }
 
     // calculate h(S)
@@ -413,89 +413,96 @@ class EntropyMinimizationDiscretizer private (
       elementsPerPartition: Int,
       maxBins: Int) = {
 
-  	val sc = data.context 
+    val sc = data.context 
       val bLabels2Int = sc.broadcast(labels2Int)
       val (dense, nFeatures) = data.first.features match {
-      	case v: DenseVector => 
-      		(true, v.size)
-      	case v: SparseVector =>     	  
-      	  	(false, v.size)
+        case v: DenseVector => 
+          (true, v.size)
+        case v: SparseVector =>         
+            (false, v.size)
       }
       
-  	val continuousVars = processContinuousAttributes(contFeat, nFeatures, dense)
-    	
-    	println("Number of continuous attributes:" + continuousVars.distinct.size)
-    	println("Total number of attributes:" + nFeatures)
-    	
-    	if(continuousVars.isEmpty) 
-    	  throw new IllegalStateException("There is no continuous attributes in the dataset")
-    	
-    	// Generate pairs ((attribute, value), class count)
-    	// In case of sparse data, we take into account whether 
-    	// the set of continuous attributes is too big to do an alternative process
+    val continuousVars = processContinuousAttributes(contFeat, nFeatures, dense)
+      
+      println("Number of continuous attributes:" + continuousVars.distinct.size)
+      println("Total number of attributes:" + nFeatures)
+      
+      if(continuousVars.isEmpty) 
+        throw new IllegalStateException("There is no continuous attributes in the dataset")
+      
+      // Generate pairs ((attribute, value), class count)
+      // In case of sparse data, we take into account whether 
+      // the set of continuous attributes is too big to do an alternative process
       val featureValues = dense match{
-    	  case true => 
-    	    val bContinuousVars = sc.broadcast(continuousVars)
-    	    data.flatMap({case LabeledPoint(label, values) =>
-    	  		bContinuousVars.value.map{ k =>
-    	  	  		val c = Array.fill[Long](nLabels)(0L)
-    	  	  		c(bLabels2Int.value(label)) = 1L
-    	  			((k, values.toArray(k)), c)
-    	  		}     	  	        
-    	    })
-    	  case false =>
-    	    val bToDiscretize = sc.broadcast(SearchUtils.binarySearch(continuousVars, _: Int))
+        case true => 
+          val bContinuousVars = sc.broadcast(continuousVars)
+          data.flatMap({case LabeledPoint(label, values) =>
+            val arr = values.toArray.map{case d => 
+                BigDecimal(d).setScale(6, BigDecimal.RoundingMode.HALF_UP).toDouble
+            }
+            
+            bContinuousVars.value.map{ k =>
+                val c = Array.fill[Long](nLabels)(0L)
+                c(bLabels2Int.value(label)) = 1L
+                ((k, arr(k)), c)
+            }                   
+          })
+        case false =>
+          val bContVars = sc.broadcast(continuousVars)
               
           data.flatMap({case LabeledPoint(label, values: SparseVector) =>
-      	    val c = Array.fill[Long](nLabels)(0L)
-    	  		c(bLabels2Int.value(label)) = 1L
-      	  	for(i <- 0 until values.indices.size if bToDiscretize.value(values.indices(i))) 
-      	  	  yield ((values.indices(i), values.values(i)), c)    	  	  
+            val c = Array.fill[Long](nLabels)(0L)
+            val arr = values.values.map{ case d => 
+                BigDecimal(d).setScale(6, BigDecimal.RoundingMode.HALF_UP).toDouble
+            }
+            c(bLabels2Int.value(label)) = 1L
+            for(i <- 0 until values.indices.size 
+                if SearchUtils.binarySearch(bContVars.value, values.indices(i))) 
+              yield ((values.indices(i), arr(i)), c)            
           })
       }
-  	
+    
       // Group elements by attribute and value (distinct values)
-    	val distinctValues = featureValues.reduceByKey{ case (v1, v2) => 
-    	  	(v1, v2).zipped.map(_ + _)
-    	}
-  	
-  	  // Sort these values to perform the boundary points evaluation
-  	  val sortedValues = distinctValues.sortByKey()   
-  	     	
-  	  // Get the first elements by partition for the boundary points evaluation
-  	  val firstElements = sc.runJob(sortedValues, { case it =>
-  	  		if (it.hasNext) Some(it.next()._1) else None
-  	    }: (Iterator[((Int, Double), Array[Long])]) => Option[(Int, Double)])
+      val distinctValues = featureValues.reduceByKey{ case (v1, v2) => 
+          (v1, v2).zipped.map(_ + _)
+      }
+    
+      // Sort these values to perform the boundary points evaluation
+      val sortedValues = distinctValues.sortByKey()   
+          
+      // Get the first elements by partition for the boundary points evaluation
+      val firstElements = sc.runJob(sortedValues, { case it =>
+          if (it.hasNext) Some(it.next()._1) else None
+        }: (Iterator[((Int, Double), Array[Long])]) => Option[(Int, Double)])
       
-    	// Get only boundary points from the whole set of distinct values
+      // Get only boundary points from the whole set of distinct values
       val initialCandidates = initialThresholds(sortedValues, firstElements)
-            .map{case ((k, point), c) => (k, (point, c))}.cache()
+              .map{case ((k, point), c) => (k, (point, c))}
+              .cache()
       
       // Divide RDD according to the number of candidates
       val bigIndexes = initialCandidates
           .countByKey()
           .filter{case (_, c) => c > maxCandidates}
       val bBigIndexes = sc.broadcast(bigIndexes)
+      
+      // Group by key those keys the small candidates and perform an iterative
+      // and separate process for each big case.
       val smallCandidatesByAtt = initialCandidates
                       .filter{case (k, _) => !bBigIndexes.value.contains(k) }
                       .groupByKey()
                       .mapValues(_.toArray)
-  
-      // big candidates are not grouped, so there can be repetead cand's
-      val bigCandidates = initialCandidates
-                      .filter{case (k, _) => bBigIndexes.value.contains(k) }
-  
-      // Group by key those keys the small candidates and perform an iterative
-      // and separate process for each big case.
+                      
       val smallThresholds = smallCandidatesByAtt
-            .mapValues(points => getThresholds(points.toArray.sortBy(_._1), maxBins))
-  
-      val bigInds = bigCandidates.keys.distinct.collect
-      println("Number of big features:\t" + bigInds.size)
-      val bigThresholds = bigInds.map{ k => 
-                  val cands = bigCandidates.filter{case (k2, _) => k == k2}.values.sortByKey()
-                  (k, getThresholds(cands, maxBins, elementsPerPartition))
-              }
+              .mapValues(points => getThresholds(points.toArray.sortBy(_._1), maxBins))
+              
+      //val bigInds = bigCandidates.keys.distinct.collect
+      println("Number of big features:\t" + bigIndexes.size)
+      var bigThresholds = Map.empty[Int, Seq[Double]]
+      for (k <- bigIndexes.keys){ 
+         val cands = initialCandidates.filter{case (k2, _) => k == k2}.values.sortByKey()
+         bigThresholds += ((k, getThresholds(cands, maxBins, elementsPerPartition)))
+      }
   
       // Join the thresholds and return them
       val bigThRDD = sc.parallelize(bigThresholds.toSeq)
@@ -505,7 +512,6 @@ class EntropyMinimizationDiscretizer private (
                           .collect
                           
       new EntropyMinimizationDiscretizerModel(thresholds)
-
   }
 
 }
@@ -523,7 +529,7 @@ object EntropyMinimizationDiscretizer {
   def train(
       input: RDD[LabeledPoint],
       continuousFeaturesIndexes: Option[Seq[Int]],
-      maxBins: Int = Int.MaxValue,
+      maxBins: Int = Byte.MaxValue - Byte.MinValue + 1,
       elementsPerPartition: Int = 10000)
     : EntropyMinimizationDiscretizerModel = {
 
