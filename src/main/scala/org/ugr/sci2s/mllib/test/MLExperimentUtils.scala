@@ -466,7 +466,6 @@ object MLExperimentUtils {
 	    		    output += aggTstConfMatrix.fValue.foldLeft("F-Measure:")((str, t) => str + "\t" + t._2) + "\n"
 	    		    output += aggTstConfMatrix.precision.foldLeft("Precision:")((str, t) => str + "\t" + t._2) + "\n"
 	    		    output += aggTstConfMatrix.recall.foldLeft("Recall:")((str, t) => str + "\t" + t._2) + "\n"
-	    		    output += aggTstConfMatrix.specificity.foldLeft("Specificity:")((str, t) => str + "\t" + t._2) + "\n\n"
 	    		    
 	    		    val aggTraConfMatrix = ConfusionMatrix.apply(predictions.map(_._1).reduceLeft(_ ++ _))
 	    		    output += "Train Confusion Matrix\n" + aggTraConfMatrix.toString
