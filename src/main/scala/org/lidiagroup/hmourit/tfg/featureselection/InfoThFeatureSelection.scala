@@ -34,7 +34,6 @@ class InfoThFeatureSelection private (
             new BDV[Byte](label.toByte +: values.toArray.map(_.toByte))
     }
   
-    val nElements = byteData.count()
     
   /**
    * Wrapper method to calculate mutual information (MI) and conditional mutual information (CMI) 
@@ -81,7 +80,8 @@ class InfoThFeatureSelection private (
       data: RDD[BV[Byte]],
       nToSelect: Int)
     : Seq[F] = {            
-
+    
+    val nElements = data.count()
     val nFeatures = data.first.size - 1
     val label = 0
     
@@ -103,7 +103,8 @@ class InfoThFeatureSelection private (
 
     while (selected.size < nToSelect) {
       // update pool
-      val newMiAndCmi = IT.miAndCmi(data, pool.keys.toSeq, Seq(selected.head.feat), Some(label), nElements, nFeatures) 
+      val newMiAndCmi = IT.miAndCmi(data, pool.keys.toSeq, Seq(selected.head.feat), 
+          Some(label), nElements, nFeatures) 
                           .map({ case ((x, _), crit) => (x, crit) })
                           .collectAsMap()
       pool.foreach({ case (k, crit) =>
@@ -144,9 +145,11 @@ class InfoThFeatureSelection private (
     : Seq[F] = {
     
     val label = 0
+    val nElements = data.count()
     
     // calculate relevance
-    var orderedRels = IT.miAndCmi(data,1 to nFeatures, Seq(label), None, nElements, nFeatures).collect
+    var orderedRels = IT.miAndCmi(data,1 to nFeatures, 
+        Seq(label), None, nElements, nFeatures).collect
         .map({ case ((k, _), (mi, _)) => (k, mi) })
         .sortBy(-_._2)
         
@@ -171,16 +174,18 @@ class InfoThFeatureSelection private (
     while (selected.size < nToSelect) {
 
       // update pool
-      val newMiAndCmi = IT.miAndCmi(data, pool.keys.toSeq, Seq(selected.head.feat), Some(label), nElements, nFeatures)
+      val newMiAndCmi = IT.miAndCmi(data, pool.keys.toSeq, Seq(selected.head.feat), 
+          Some(label), nElements, nFeatures)
             .collectAsMap()
             .map({ case ((x, _), crit) => (x, crit) })
+            
       pool.foreach({ case (k, crit) =>
           newMiAndCmi.get(k) match {
             case Some((mi, cmi)) => crit.update(mi, cmi)
             case None => 
           }
       })
-      
+            
       // look for maximum and bound
       max = pool.maxBy(_._2.score)
       var min = pool.minBy(_._2.relevance)._2.asInstanceOf[InfoThCriterion with Bound]
@@ -194,13 +199,14 @@ class InfoThFeatureSelection private (
                 .toMap
         
         // do missed calculations (for each previously selected attribute)
-        val missedMiAndCmi = IT.miAndCmi(data, newFeatures.keys.toSeq, selected.map(_.feat), Some(label), nElements, nFeatures)        
-        missedMiAndCmi.foreach{ case ((feat, _), (mi, cmi)) => 
-            newFeatures.get(feat) match {
-              case Some(crit) => crit.update(mi, cmi)
-              case None => 
-            }     
-        }
+        val missedMiAndCmi = IT.miAndCmi(data, newFeatures.keys.toSeq, 
+            selected.map(_.feat), Some(label), nElements, nFeatures)        
+            missedMiAndCmi.foreach{ case ((feat, _), (mi, cmi)) => 
+              newFeatures.get(feat) match {
+                case Some(crit) => crit.update(mi, cmi)
+                case None => 
+              }     
+            }
         
         // Add new features to the pool and remove them from the other set
         pool ++= newFeatures.toSeq
