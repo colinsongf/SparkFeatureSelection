@@ -51,20 +51,22 @@ class EntropyMinimizationDiscretizerModel (val thresholds: Array[(Int, Seq[Doubl
   					newValues = assignDiscreteValue(values.values(i), 
   					    bc_thresholds.value(ind)._2).toDouble +: newValues
   				}
-    	  	}
+  	  	}
       	  	// the `index` array inside sparse vector object will not be changed,
       	  	// so we can re-use it to save memory.
-    	    LabeledPoint(label, Vectors.sparse(values.size, values.indices, newValues))
+  	    LabeledPoint(label, Vectors.sparse(values.size, values.indices, newValues))
+        
   		case LabeledPoint(label, values: DenseVector) =>
       	  	val threshInds = bc_thresholds.value.toMap
       	  	val newValues = values.toArray.zipWithIndex.map({ case (value, i) =>
       	  	  	threshInds.get(i) match {
-		        	case Some(th) => assignDiscreteValue(value, th).toDouble
-		        	case None => value
-		        }
-  	  	  	})
-      	  	LabeledPoint(label, Vectors.dense(newValues))
-	}
+    		        	case Some(th) => assignDiscreteValue(value, th).toDouble
+    		        	case None => value
+    		        }
+	  	  	  })
+      	  	
+            LabeledPoint(label, Vectors.dense(newValues))
+    }
   }
 
 

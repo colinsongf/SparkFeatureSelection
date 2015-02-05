@@ -202,10 +202,11 @@ class EntropyMinimizationDiscretizer private (
 
         evalThresholds(cands, lastThresh, nLabels) match {
           case Some(th) =>
+            println("New point: " + th)
             result = th +: result
             stack.enqueue(((bounds._1, th), Some(th)))
             stack.enqueue(((th, bounds._2), Some(th)))
-          case None => /* criteria not fulfilled, finish */
+          case None => println("not fullfilled") /* criteria not fulfilled, finish */
         }
       }
     }
@@ -413,7 +414,8 @@ class EntropyMinimizationDiscretizer private (
       elementsPerPartition: Int,
       maxBins: Int) = {
 
-    val sc = data.context 
+      val sc = data.context 
+      val nInstances = data.count
       val bLabels2Int = sc.broadcast(labels2Int)
       val (dense, nFeatures) = data.first.features match {
         case v: DenseVector => 
@@ -422,13 +424,14 @@ class EntropyMinimizationDiscretizer private (
             (false, v.size)
       }
       
+      
     val continuousVars = processContinuousAttributes(contFeat, nFeatures, dense)
       
       println("Number of continuous attributes:" + continuousVars.distinct.size)
       println("Total number of attributes:" + nFeatures)
       
       if(continuousVars.isEmpty) 
-        throw new IllegalStateException("There is no continuous attributes in the dataset")
+          throw new IllegalStateException("There is no continuous attributes in the dataset")
       
       // Generate pairs ((attribute, value), class count)
       // In case of sparse data, we take into account whether 
@@ -466,6 +469,13 @@ class EntropyMinimizationDiscretizer private (
       val distinctValues = featureValues.reduceByKey{ case (v1, v2) => 
           (v1, v2).zipped.map(_ + _)
       }
+      
+      /*val zeros = nonzeros
+            .map{case ((k, p), v) => (k, v)}
+            .reduceByKey{ case (v1, v2) =>  (v1, v2).zipped.map(_ + _)}
+            .map{case (k, v) => ((k, 0.0), v.map(s => nInstances - s))}
+            .filter{case (k, v) => v.sum > 0}      
+      val distinctValues = nonzeros.union(zeros)*/
     
       // Sort these values to perform the boundary points evaluation
       val sortedValues = distinctValues.sortByKey()   
@@ -507,7 +517,6 @@ class EntropyMinimizationDiscretizer private (
       // Join the thresholds and return them
       val bigThRDD = sc.parallelize(bigThresholds.toSeq)
       val thresholds = smallThresholds.union(bigThRDD)
-                          .filter{case (k, arr) => arr.size > 2} // more than +/- Infinity
                           .sortByKey()
                           .collect
                           
