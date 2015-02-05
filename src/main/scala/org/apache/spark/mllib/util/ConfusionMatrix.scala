@@ -17,8 +17,6 @@ trait ConfusionMatrix extends Serializable {
   def precision: Array[(Double, Double)]
 
   def recall: Array[(Double, Double)]
-  
-  def specificity: Array[(Double, Double)]
 
   def fValue(label: Double): Double
 
@@ -41,8 +39,6 @@ trait ConfusionMatrixWithDict extends Serializable {
   def precision: Array[(String, Double)]
 
   def recall: Array[(String, Double)]
-  
-  def specificity: Array[(String, Double)]
 
   def fValue(label: String): Double
 
@@ -116,29 +112,8 @@ class ConfusionMatrixImpl(val dataAndPreds: RDD[(Double, Double)])
     }
     val index = labelIndexMap(label)
     val correct = innerMatrix.get(index, index)
-    val all = colSum(index)
+    val all = rowSum(index)
     correct / all
-  }
-  
-  def specificity(label: Double): Double = {
-	if (!labelIndexMap.contains(label)) {
-      throw new RuntimeException("No such label:" + label +
-        ", the availabel labels are following:" + labelIndexMap.map(_._1).mkString(","))
-    }
-	
-	val diagonalSum = labelIndexMap.map(e => {
-		val (auxLabel, colIndex) = (e._1, e._2)
-		if(auxLabel != label) (innerMatrix.get(colIndex, colIndex), colSum(colIndex)) else (0.0, 0.0)
-      })
-    val (incorrect, all) = (diagonalSum.map(_._1).sum, diagonalSum.map(_._2).sum)
-    incorrect / all
-  }
-  
-  def specificity: Array[(Double, Double)] = {
-    labelIndexMap.map(e => {
-      val label = e._1
-      (label, specificity(label))
-    }).toArray
   }
 
   def precision: Array[(Double, Double)] = {
@@ -174,7 +149,7 @@ class ConfusionMatrixImpl(val dataAndPreds: RDD[(Double, Double)])
 
   def accuracy: Double = {
     val correct = labelIndexMap.map(e => innerMatrix.get(e._2, e._2)).sum
-    val total = colSum.sum
+    val total = rowSum.sum
     correct / total
   }
 
@@ -234,14 +209,6 @@ class ConfusionMatrixWithDictImpl(val data: RDD[(Double, Double)], val dict: Map
     doubleConfusionMatrix.recall(dict(label))
   }
 
-  def specificity(label: String): Double = {
-    if (!dict.contains(label)) {
-      throw new RuntimeException("No such label:" + label +
-        ", the availabel labels are following:" + dict.map(_._1).mkString(","))
-    }
-    doubleConfusionMatrix.specificity(dict(label))
-  }
-  
   def precision: Array[(String, Double)] = {
     dict.map(e => {
       (e._1, precision(e._1))
@@ -254,11 +221,6 @@ class ConfusionMatrixWithDictImpl(val data: RDD[(Double, Double)], val dict: Map
     }).toArray
   }
   
-  def specificity: Array[(String, Double)] = {
-    dict.map(e => {
-      (e._1, specificity(e._1))
-    }).toArray
-  }
 
   def fValue(label: String): Double = {
     if (!dict.contains(label)) {
