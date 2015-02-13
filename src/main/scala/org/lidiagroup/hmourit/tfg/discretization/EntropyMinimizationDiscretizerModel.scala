@@ -12,7 +12,7 @@ import org.apache.spark.mllib.util.SearchUtils
  * @param thresholds Thresholds used to discretize (must be sorted)
  *  
  */
-class EntropyMinimizationDiscretizerModel (val thresholds: Array[(Int, Seq[Double])])
+class EntropyMinimizationDiscretizerModel (val thresholds: Array[(Int, Seq[Float])])
   extends DiscretizerModel[LabeledPoint] with Serializable {
   
   
@@ -33,40 +33,40 @@ class EntropyMinimizationDiscretizerModel (val thresholds: Array[(Int, Seq[Doubl
   /**
    * Discretizes values for the given data set using the model trained.
    *
-   * @param data RDD representing data points to discretize.
-   * @return RDD with values discretized
+   * @param data RDD with continuous data.
+   * @return RDD with data discretized.
    */
   override def discretize(data: RDD[LabeledPoint]) = {
-    // must be sorted to perform the evaluation
+    // thresholds must be sorted by key index to perform the evaluation
     val bc_thresholds = data.context.broadcast(thresholds)    
     data.map{
       	case LabeledPoint(label, values: SparseVector) =>
       	  	var newValues = Array.empty[Double]
       	  	val threshInds = bc_thresholds.value.map(_._1)
-  			for(i <- 0 until values.indices.size) {
-  				val ind = SearchUtils.binarySearch2(threshInds, values.indices(i))
-  				if (ind == -1) {
-  					newValues = values.values(i) +: newValues
-  				} else {
-  					newValues = assignDiscreteValue(values.values(i), 
-  					    bc_thresholds.value(ind)._2).toDouble +: newValues
-  				}
-  	  	}
+      			for(i <- 0 until values.indices.size) {
+        				val ind = SearchUtils.binarySearch2(threshInds, values.indices(i))
+        				if (ind == -1) {
+        					newValues = values.values(i) +: newValues
+        				} else {
+        					newValues = assignDiscreteValue(values.values(i), 
+        					    bc_thresholds.value(ind)._2).toDouble +: newValues
+        				}
+      	  	}
       	  	// the `index` array inside sparse vector object will not be changed,
       	  	// so we can re-use it to save memory.
-  	    LabeledPoint(label, Vectors.sparse(values.size, values.indices, newValues))
+      	    LabeledPoint(label, Vectors.sparse(values.size, values.indices, newValues))
         
-  		case LabeledPoint(label, values: DenseVector) =>
+  		  case LabeledPoint(label, values: DenseVector) =>
       	  	val threshInds = bc_thresholds.value.toMap
       	  	val newValues = values.toArray.zipWithIndex.map({ case (value, i) =>
       	  	  	threshInds.get(i) match {
-    		        	case Some(th) => assignDiscreteValue(value, th).toDouble
+    		        	case Some(th) => assignDiscreteValue(value, th)
     		        	case None => value
     		        }
 	  	  	  })
       	  	
             LabeledPoint(label, Vectors.dense(newValues))
-    }
+      }
   }
 
 
@@ -76,7 +76,7 @@ class EntropyMinimizationDiscretizerModel (val thresholds: Array[(Int, Seq[Doubl
    * @param value The value to be discretized
    * @param thresholds Thresholds used to assign a discrete value
    */
-  private def assignDiscreteValue(value: Double, thresholds: Seq[Double]) = {
+  private def assignDiscreteValue(value: Double, thresholds: Seq[Float]) = {
     var aux = thresholds.zipWithIndex
     while (value > aux.head._1) aux = aux.tail
     aux.head._2

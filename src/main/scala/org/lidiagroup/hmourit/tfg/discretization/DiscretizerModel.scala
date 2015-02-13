@@ -17,6 +17,6 @@ trait DiscretizerModel[T] extends Serializable {
    */
   def discretize(data: RDD[T]): RDD[T]
   
-  def getThresholds: Array[(Int, Seq[Double])]
+  def getThresholds: Array[(Int, Seq[Float])]
 
 }
