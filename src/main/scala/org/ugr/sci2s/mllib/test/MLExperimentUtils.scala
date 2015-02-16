@@ -38,9 +38,9 @@ object MLExperimentUtils {
   			}
 		  }
   
-  		private def parseThresholds (str: String): (Int, Seq[Double])= {
+  		private def parseThresholds (str: String): (Int, Seq[Float])= {
   			val tokens = str split "\t"
-  			val points = tokens.slice(1, tokens.length).map(_.toDouble)
+  			val points = tokens.slice(1, tokens.length).map(_.toFloat)
   			val attIndex = tokens(0).toInt
   			(attIndex, points.toSeq)
   		}
@@ -400,10 +400,13 @@ object MLExperimentUtils {
 				times("FSTime") = times("FSTime") :+ taskTime
 				
 				//Classification
+        val nFeatures = trData.first().features.size
+        println("Number of features: " + nFeatures)
+        
 				classify match { 
 				  case Some(cls) => 
 				    val (traValuesAndPreds, tstValuesAndPreds, classificationTime) = 
-				  		classification(cls, trData, tstData, outputDir, i)
+				  		classification(cls, trData.cache, tstData.cache, outputDir, i)
 					taskTime = classificationTime
 					/* Confusion matrix for the test set */
 					//confusionMatrices :+ ConfusionMatrix.apply(tstValuesAndPreds, typeConversion.last)
