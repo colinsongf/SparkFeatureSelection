@@ -14,12 +14,11 @@ import org.apache.spark.mllib.util.SearchUtils
  * method proposed by Fayyad and Irani in Multi-Interval Discretization of Continuous-Valued
  * Attributes (1993).
  *
- * @param data an RDD of LabeledPoint (in dense or sparse format)
+ * @param data RDD of LabeledPoint (in dense or sparse format)
  */
 class EntropyMinimizationDiscretizer private (
     val data: RDD[LabeledPoint]) extends Serializable {
 
-  //private val partitions = { x: Long => math.ceil(x.toFloat / elementsPerPartition).toInt }
   private val log2 = { x: Double => math.log(x) / math.log(2) }  
   private val isBoundary = (f1: Array[Long], f2: Array[Long]) => {
       (f1, f2).zipped.map(_ + _).filter(_ != 0).size > 1
@@ -32,13 +31,13 @@ class EntropyMinimizationDiscretizer private (
   
   /**
    * Get information about the attributes in order to perform a correct discretization process.
-   * @param contFeat Indexes of features to be discretized (optional, in case not specified, they are calculated).
-   * @param nFeatures Total number of input features
-   * @param dense If the dataset is in dense format.
-   * @return Indexes of the continuous features
+   * @param contFeat Subset of indexes to be considered (in case it is not specified, they are calculated).
+   * @param nFeatures Total number of input features.
+   * @param dense If the dataset is dense or not.
+   * @return Indexes of continuous features.
    */  
   private def processContinuousAttributes(contFeat: Option[Seq[Int]], nFeatures: Int, dense: Boolean) = {
-        // Function to calculate pairs according to the data format.
+        // It generates pairs according to the data format.
       def calcRawData = {
         dense match {
           case true =>
@@ -53,7 +52,7 @@ class EntropyMinimizationDiscretizer private (
         }    
       }
       
-      // (Pre-processing) Count the number of features and what attributes are continuous
+      // (Pre-processing) Count the number of features and which one are continuous
       contFeat match {
           case Some(s) => 
             // Attributes are in range 0..nfeat
@@ -61,21 +60,21 @@ class EntropyMinimizationDiscretizer private (
             require(intersect.size == s.size)
             s.toArray
           case None =>        
-            val freqCount = calcRawData
+            val countFeat = calcRawData
                 .distinct
                 .mapValues(d => 1L)
                 .reduceByKey(_ + _)
                 .filter{case (_, c) => c > maxLimitBins}
-            val cvars = freqCount.sortByKey().keys.collect()
+            val cvars = countFeat.sortByKey().keys.collect()
             cvars       
       }
   }
   
   /**
    * Calculates the initial candidate thresholds for a feature
-   * @param data RDD (value, frequencies) of DISTINCT values for one particular feature.
-   * @param firstElements first elements each partition (to be broadcasted to all partitions ) 
-   * @return RDD of (boundary point, class frequencies between last and current candidate) pairs.
+   * @param points RDD with distinct points for all features ((index, point), class frequency vector) to be evaluated.
+   * @param firstElements first elements by partition (used to evaluate points in the partitions limit) 
+   * @return RDD of boundary points (point, class frequency vector between the previous and the current candidate).
    */
   private def initialThresholds(
       points: RDD[((Int, Float), Array[Long])], 
@@ -105,8 +104,8 @@ class EntropyMinimizationDiscretizer private (
                 
                 lastK = k
                 lastX = x
-            lastFreqs = freqs
-            accumFreqs = (accumFreqs, freqs).zipped.map(_ + _)
+                lastFreqs = freqs
+                accumFreqs = (accumFreqs, freqs).zipped.map(_ + _)
         }
        
         // Last point to end the set
@@ -126,71 +125,28 @@ class EntropyMinimizationDiscretizer private (
         }             
     })
   }
-    /**
-   * Calculates class frequencies for each distinct point in the dataset
-   * @param data RDD of (value, label) pairs.
-   * @param nLabels Number of distinct labels in the dataset.
-   * @return RDD of (point, class frequencies) pairs.
-   *
-   */
-  private def countFrequencies(
-    data: RDD[(Float, Int)],
-  nLabels: Int) = {
-
-    data.mapPartitions({ it =>
-  
-      def countFreq(
-          it: Iterator[(Float, Int)],
-          lastX: Float,
-          accumFreqs: Array[Long]): Seq[(Float, Array[Long])] = {
-  
-          if (it.hasNext) {
-            val (x, y) = it.next()
-            if (x == lastX) {
-            // same point than previous
-              accumFreqs(y) += 1L
-              countFreq(it, x, accumFreqs)
-            } else {
-              // new point
-              val newAccum = Array.fill[Long](nLabels)(0L)
-              newAccum(y) += 1L
-              (lastX, accumFreqs.clone) +: countFreq(it, x, newAccum)
-            }
-          } else {
-            Seq((lastX, accumFreqs))
-          }
-      }
-  
-      if (it.hasNext) {
-        val (firstX, firstY) = it.next() // first element
-        val accumFreqs = Array.fill[Long](nLabels)(0L)
-        accumFreqs(firstY) += 1L
-        countFreq(it, firstX, accumFreqs).toIterator
-      } else {
-        Iterator.empty
-      }
-    }, preservesPartitioning = true)
-
-  } 
   
   /**
-   * Returns a sequence of floats that define the intervals to discretize.
-   *
-   * @param candidates RDD of (value, label) pairs
+   * Evaluates boundary points and selects the most relevant for discretization.
+   * This version is for huge sets of candidate points (distributed version).
+   * @param candidates RDD of candidates points (value, label).
+   * @param maxBins Maximum number of bins to select (# thresholds = maxBins - 1)
+   * @param elementsByPart Maximum number of elements to evaluate in each partition.
+   * @return Sequence of threshold values.
    */
   private def getThresholds(
       candidates: RDD[(Float, Array[Long])], 
       maxBins: Int, 
-      elementsPerPartition: Int): Seq[Float] = {
+      elementsByPart: Int): Seq[Float] = {
 
-    val partitions = { x: Long => math.ceil(x.toFloat / elementsPerPartition).toInt }
+    val partitions = { x: Long => math.ceil(x.toFloat / elementsByPart).toInt }
     
     // Create queue
     val stack = new mutable.Queue[((Float, Float), Option[Float])]
 
     // Insert the extreme values in the stack
     stack.enqueue(((Float.NegativeInfinity, Float.PositiveInfinity), None))
-    var result = Seq(Float.NegativeInfinity)
+    var result = Seq.empty[Float]
 
     // As long as there are more elements to evaluate, we continue
     while(stack.length > 0 && result.size < maxBins){
@@ -201,24 +157,25 @@ class EntropyMinimizationDiscretizer private (
       val nCands = cands.count
       if (nCands > 0) {
         cands = cands.coalesce(partitions(nCands))
-
+        //Selects one threshold among the candidates and returns two partitions to recurse
         evalThresholds(cands, lastThresh, nLabels) match {
           case Some(th) =>
-            println("New point: " + th)
             result = th +: result
             stack.enqueue(((bounds._1, th), Some(th)))
             stack.enqueue(((th, bounds._2), Some(th)))
-          case None => println("not fullfilled") /* criteria not fulfilled, finish */
+          case None => /* criteria not fulfilled, finish */
         }
       }
     }
-    (Float.PositiveInfinity +: result).sorted
+    result.sorted
   }
   
   /**
-   * Returns a sequence of floats that define the intervals to discretize.
-   *
-   * @param candidates RDD of (value, label) pairs
+   * Evaluates boundary points and selects the most relevant for discretization.
+   * In this version the evaluation is performed locally as the number of points is sufficiently small.
+   * @param candidates RDD of candidates points (value, label).
+   * @param maxBins Maximum number of bins to select (# thresholds = maxBins - 1)
+   * @return Sequence of threshold values.
    */
   private def getThresholds(
       candidates: Array[(Float, Array[Long])], 
@@ -229,12 +186,12 @@ class EntropyMinimizationDiscretizer private (
 
     // Insert first in the stack
     stack.enqueue(((Float.NegativeInfinity, Float.PositiveInfinity), None))
-    var result = Seq(Float.NegativeInfinity)
+    var result = Seq.empty[Float]
 
-    // While more elements to evaluate, continue
     while(stack.length > 0 && result.size < maxBins){
 
       val (bounds, lastThresh) = stack.dequeue
+      // Filter candidates within the last range added
       val newCandidates = candidates.filter({ case (th, _) => th > bounds._1 && th <= bounds._2 })
       
       if (newCandidates.size > 0) {
@@ -247,14 +204,17 @@ class EntropyMinimizationDiscretizer private (
         }
       }
     }
-    (Float.PositiveInfinity +: result).sorted
+    //(Float.PositiveInfinity +: result).sorted
+    result.sorted
   }
 
   /**
-   * Selects one final thresholds among the candidates and returns two partitions to recurse
-   * (calculation parallelized using several nodes)
-   * @param candidates RDD of (candidate, class frequencies between last and current candidate)
-   * @param lastSelected last selected threshold to avoid selecting it again
+   * Calculates entropy minimization for candidate points in a range and select the best one 
+   * according to that measure when required (distributed version).
+   * @param candidates RDD of candidate points.
+   * @param lastSelected last selected threshold.
+   * @param nLabels Number of classes.
+   * @return The point with the minimum entropy
    */
   private def evalThresholds(
       candidates: RDD[(Float, Array[Long])],
@@ -302,8 +262,7 @@ class EntropyMinimizationDiscretizer private (
     // calculate h(S)
     // s: number of elements
     // k: number of distinct classes
-    // hs: entropy  
-      
+    // hs: entropy        
     val s  = totals.sum
     val hs = InfoTheory.entropy(totals.toSeq, s)
     val k  = totals.filter(_ != 0).size
@@ -338,10 +297,12 @@ class EntropyMinimizationDiscretizer private (
   }
   
   /**
-   * Selects one final thresholds among the candidates and returns two partitions to recurse
-   * (calculation parallelized using only one node (the driver))
-   * @param candidates RDD of (candidate, class frequencies between last and current candidate)
-   * @param lastSelected last selected threshold to avoid selecting it again
+   * Calculates entropy minimization for candidate points in a range and select the best one 
+   * according to that measure when required (sequential version).
+   * @param candidates Array of candidate points.
+   * @param lastSelected last selected threshold.
+   * @param nLabels Number of classes.
+   * @return The point with the minimum entropy
    */
   private def evalThresholds(
       candidates: Array[(Float, Array[Long])],
@@ -406,29 +367,29 @@ class EntropyMinimizationDiscretizer private (
   }
  
   /**
-   * Run the algorithm with the configured parameters on an input.
-   * @param contFeat Indexes of features to be discretized (optional, in case not specified, they are calculated).
-   * @param elementsPerPartition Maximum number of thresholds to treat in each RDD partition.
-   * @param maxBins Maximum number of bins for each discretized feature.
-   * @return A EntropyMinimizationDiscretizerModel with the thresholds to discretize.
+   * Run the entropy minimization discretizer on input data previously initialized.
+   * @param contFeat Feature indexes to discretize (in case not specified, they are calculated).
+   * @param elementsByPart Maximum number of elements to evaluate in each partition.
+   * @param maxBins Maximum number of bins by feature.
+   * @return A EntropyMinimizationDiscretizerModel with the discretization thresholds.
    */
   def runAll(contFeat: Option[Seq[Int]], 
-      elementsPerPartition: Int,
+      elementsByPart: Int,
       maxBins: Int) = {
 
       val sc = data.context 
       val nInstances = data.count
       val bLabels2Int = sc.broadcast(labels2Int)
+      val classDistrib = data.map(d => bLabels2Int.value(d.label)).countByValue()
+      val bclassDistrib = sc.broadcast(classDistrib)
       val (dense, nFeatures) = data.first.features match {
         case v: DenseVector => 
           (true, v.size)
         case v: SparseVector =>         
             (false, v.size)
       }
-      
-      
+            
       val continuousVars = processContinuousAttributes(contFeat, nFeatures, dense)
-      
       println("Number of continuous attributes:" + continuousVars.distinct.size)
       println("Total number of attributes:" + nFeatures)
       
@@ -475,12 +436,15 @@ class EntropyMinimizationDiscretizer private (
           (v1, v2).zipped.map(_ + _)
       }
       
-      // Add zero elements just in case of sparse data
+      // Add zero elements for sparse data
       val zeros = nonzeros
             .map{case ((k, p), v) => (k, v)}
             .reduceByKey{ case (v1, v2) =>  (v1, v2).zipped.map(_ + _)}
-            .map{case (k, v) => ((k, 0.0F), v.map(s => nInstances - s))}
-            .filter{case (k, v) => v.sum > 0}      
+            .map{case (k, v) => 
+              val v2 = for(i <- 0 until v.length) yield bclassDistrib.value(i) - v(i)
+              ((k, 0.0F), v2.toArray)
+            }
+            .filter{case (_, v) => v.sum > 0}
       val distinctValues = nonzeros.union(zeros)
     
       // Sort these values to perform the boundary points evaluation
@@ -495,7 +459,6 @@ class EntropyMinimizationDiscretizer private (
       val initialCandidates = initialThresholds(sortedValues, firstElements)
               .map{case ((k, point), c) => (k, (point, c))}
               .cache() // It will be iterated through "big indexes" loop
-      initialCandidates.checkpoint()
       
       // Divide RDD according to the number of candidates
       val bigIndexes = initialCandidates
@@ -513,18 +476,17 @@ class EntropyMinimizationDiscretizer private (
       val smallThresholds = smallCandidatesByAtt
               .mapValues(points => getThresholds(points.toArray.sortBy(_._1), maxBins))
               
-      //val bigInds = bigCandidates.keys.distinct.collect
       println("Number of big features:\t" + bigIndexes.size)
       var bigThresholds = Map.empty[Int, Seq[Float]]
       for (k <- bigIndexes.keys){ 
          val cands = initialCandidates.filter{case (k2, _) => k == k2}.values.sortByKey()
-         bigThresholds += ((k, getThresholds(cands, maxBins, elementsPerPartition)))
+         bigThresholds += ((k, getThresholds(cands, maxBins, elementsByPart)))
       }
   
       // Join the thresholds and return them
       val bigThRDD = sc.parallelize(bigThresholds.toSeq)
       val thresholds = smallThresholds.union(bigThRDD)
-                          .sortByKey() // Important
+                          .sortByKey() // Important!
                           .collect
                           
       new EntropyMinimizationDiscretizerModel(thresholds)
@@ -537,19 +499,20 @@ object EntropyMinimizationDiscretizer {
   /**
    * Train a EntropyMinimizationDiscretizerModel given an RDD of LabeledPoint's.
    * @param input RDD of LabeledPoint's.
-   * @param continuousFeaturesIndexes Indexes of features to be discretized.
+   * @param continuousFeaturesIndexes Indexes of features to be discretized. 
+   *  In case of empty value, the algorithm selects those features with more than 256 (byte range) distinct values.
    * @param maxBins Maximum number of bins for feature.
-   * @param elementsPerPartition Maximum number of thresholds to work with in each RDD partition.
-   * @return A EntropyMinimizationDiscretizerModel with the thresholds to discretize.
+   * @param elementsPerPartition Maximum number of elements to manage in each RDD partition.
+   * @return A EntropyMinimizationDiscretizerModel with the subsequent thresholds for discretization.
    */
   def train(
       input: RDD[LabeledPoint],
       continuousFeaturesIndexes: Option[Seq[Int]],
       maxBins: Int = Byte.MaxValue - Byte.MinValue + 1,
-      elementsPerPartition: Int = 10000)
+      elementsByPart: Int = 10000)
     : EntropyMinimizationDiscretizerModel = {
 
-    new EntropyMinimizationDiscretizer(input).runAll(continuousFeaturesIndexes, elementsPerPartition, maxBins)
+    new EntropyMinimizationDiscretizer(input).runAll(continuousFeaturesIndexes, elementsByPart, maxBins)
 
   }
 

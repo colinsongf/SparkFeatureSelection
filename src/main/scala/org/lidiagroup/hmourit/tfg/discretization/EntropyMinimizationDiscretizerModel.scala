@@ -8,33 +8,18 @@ import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.mllib.util.SearchUtils
 
 /**
- * This class provides the methods to discretize data with the given thresholds.
- * @param thresholds Thresholds used to discretize (must be sorted)
+ * This class provides the methods to discretize data, given a list of thresholds.
+ * @param thresholds Thresholds by feature used to discretize (each vector must be sorted)
  *  
  */
 class EntropyMinimizationDiscretizerModel (val thresholds: Array[(Int, Seq[Float])])
   extends DiscretizerModel[LabeledPoint] with Serializable {
-  
-  
-  /*override def discretize(data: LabeledPoint): LabeledPoint = {
-    
-    val discFeatures = data.features match { 
-      	case values: SparseVector =>
-    	    val newValues = discretizeFeatures(values.indices, values.values, thresholds)
-    	    Vectors.sparse(values.size, values.indices, newValues)
-      	case values: DenseVector =>
-      	  	val newValues = discretizeFeatures((0 until values.size).toArray, values.toArray, thresholds)
-      	  	Vectors.dense(newValues)
-    }
-    
-    LabeledPoint(data.label, discFeatures)
-  }*/
 
   /**
-   * Discretizes values for the given data set using the model trained.
+   * Discretizes values in a given dataset using a set of thresholds.
    *
    * @param data RDD with continuous data.
-   * @return RDD with data discretized.
+   * @return RDD with data discretized (with bins from 1 to n).
    */
   override def discretize(data: RDD[LabeledPoint]) = {
     // thresholds must be sorted by key index to perform the evaluation
@@ -73,13 +58,13 @@ class EntropyMinimizationDiscretizerModel (val thresholds: Array[(Int, Seq[Float
   /**
    * Discretizes a value with a set of intervals.
    *
-   * @param value The value to be discretized
+   * @param value Value to be discretized
    * @param thresholds Thresholds used to assign a discrete value
    */
   private def assignDiscreteValue(value: Double, thresholds: Seq[Float]) = {
-    var aux = thresholds.zipWithIndex
-    while (value > aux.head._1) aux = aux.tail
-    aux.head._2
+    if(thresholds.isEmpty) 1
+        else if (value > thresholds.last) thresholds.size + 1
+        else thresholds.indexWhere{value <= _} + 1
   }
   
   override def getThresholds() = thresholds
