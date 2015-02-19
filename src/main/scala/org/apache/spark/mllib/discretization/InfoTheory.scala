@@ -1,4 +1,4 @@
-package org.lidiagroup.hmourit.tfg.discretization
+package org.apache.spark.mllib.discretization
 
 /**
  * Object with some Information Theory methods.

@@ -1,9 +1,9 @@
-package org.lidiagroup.hmourit.tfg.featureselection
+package org.apache.spark.mllib.featureselection
 
 import org.apache.spark.rdd.RDD
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.SparkContext._
-import org.lidiagroup.hmourit.tfg.featureselection.{InfoTheory => IT}
+import org.apache.spark.mllib.featureselection.{InfoTheory => IT}
 import org.apache.spark.storage.StorageLevel
 import org.apache.spark.mllib.linalg.{DenseVector, SparseVector}
 import breeze.linalg.{DenseVector => BDV, SparseVector => BSV, Vector => BV}

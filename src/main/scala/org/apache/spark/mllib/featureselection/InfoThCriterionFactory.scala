@@ -1,4 +1,4 @@
-package org.lidiagroup.hmourit.tfg.featureselection
+package org.apache.spark.mllib.featureselection
 
 /**
  * Factory class that generates a wide range of info-theory criterions [1] to 

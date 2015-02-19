@@ -10,15 +10,13 @@ import org.apache.spark.SparkContext
 import scala.util.Random
 import org.lidiagroup.hmourit.tfg._
 import scala.collection.immutable.List
-import org.lidiagroup.hmourit.tfg.discretization._
-import org.lidiagroup.hmourit.tfg.featureselection._
+import org.apache.spark.mllib.discretization._
+import org.apache.spark.mllib.featureselection._
 import org.apache.spark.mllib.linalg.Vectors
 import org.apache.hadoop.mapreduce.lib.input.InvalidInputException
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.storage.StorageLevel
 import org.apache.spark.mllib.util.MLUtils
-import org.lidiagroup.hmourit.tfg.featureselection.FeatureSelectionModel
-import org.lidiagroup.hmourit.tfg.featureselection.InfoThFeatureSelectionModel
 
 object MLExperimentUtils {
   
@@ -379,7 +377,7 @@ object MLExperimentUtils {
 				discretize match { 
 				  case (Some(disc), b) => 
 				    val (discTrData, discTstData, discTime) = discretization(
-								disc, trData, tstData, outputDir, i, save = b) 
+								disc, trData, tstData, outputDir, i, save = true) 
 					trData = discTrData
 					tstData = discTstData
 					taskTime = discTime

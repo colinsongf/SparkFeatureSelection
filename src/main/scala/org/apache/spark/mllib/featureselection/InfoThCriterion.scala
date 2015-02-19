@@ -1,4 +1,4 @@
-package org.lidiagroup.hmourit.tfg.featureselection
+package org.apache.spark.mllib.featureselection
 
 /**
  * Trait which declares needed methods to define a criterion for Feature Selection

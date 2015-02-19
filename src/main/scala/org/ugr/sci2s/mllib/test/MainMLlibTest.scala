@@ -8,10 +8,8 @@ import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.SparkConf
 import org.apache.spark.SparkContext
 import org.ugr.sci2s.mllib.test.{MLExperimentUtils => MLEU}
-import org.lidiagroup.hmourit.tfg.discretization._
-import org.lidiagroup.hmourit.tfg.featureselection._
-import org.lidiagroup.hmourit.tfg.featureselection.InfoThCriterionFactory
-import org.lidiagroup.hmourit.tfg.featureselection.InfoThFeatureSelection
+import org.apache.spark.mllib.discretization._
+import org.apache.spark.mllib.featureselection._
 
 class MLlibRegistrator extends KryoRegistrator {
   override def registerClasses(kryo: Kryo) {

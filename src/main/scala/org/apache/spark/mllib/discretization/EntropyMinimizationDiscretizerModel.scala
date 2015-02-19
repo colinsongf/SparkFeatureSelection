@@ -1,4 +1,4 @@
-package org.lidiagroup.hmourit.tfg.discretization
+package org.apache.spark.mllib.discretization
 
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.rdd.RDD
@@ -9,7 +9,7 @@ import org.apache.spark.mllib.util.SearchUtils
 
 /**
  * This class provides the methods to discretize data, given a list of thresholds.
- * @param thresholds Thresholds by feature used to discretize (each vector must be sorted)
+ * @param thresholds Thresholds by feature used to discretize (each one must be sorted)
  *  
  */
 class EntropyMinimizationDiscretizerModel (val thresholds: Array[(Int, Seq[Float])])

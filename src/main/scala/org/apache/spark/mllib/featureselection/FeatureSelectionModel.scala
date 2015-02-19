@@ -1,4 +1,4 @@
-package org.lidiagroup.hmourit.tfg.featureselection
+package org.apache.spark.mllib.featureselection
 
 import org.apache.spark.rdd._
 

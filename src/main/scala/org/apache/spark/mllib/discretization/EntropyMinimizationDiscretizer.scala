@@ -1,4 +1,4 @@
-package org.lidiagroup.hmourit.tfg.discretization
+package org.apache.spark.mllib.discretization
 
 import scala.collection.mutable
 import org.apache.spark.SparkContext._
@@ -60,11 +60,14 @@ class EntropyMinimizationDiscretizer private (
             require(intersect.size == s.size)
             s.toArray
           case None =>        
-            val countFeat = calcRawData
+            val countFeat2 = calcRawData
                 .distinct
                 .mapValues(d => 1L)
                 .reduceByKey(_ + _)
-                .filter{case (_, c) => c > maxLimitBins}
+            
+              println("countFeat: " + countFeat2.take(100).mkString("\n"))
+                
+            val countFeat = countFeat2.filter{case (_, c) => c > maxLimitBins}
             val cvars = countFeat.sortByKey().keys.collect()
             cvars       
       }
@@ -398,7 +401,7 @@ class EntropyMinimizationDiscretizer private (
       
       // Generate pairs ((attribute, value), class count)
       // In case of sparse data, we take into account whether 
-      // the set of continuous attributes is too big to do an alternative process
+      // the set of continuous attributes is too big to round decimals
       val featureValues = dense match{
         case true => 
           val bContinuousVars = sc.broadcast(continuousVars)
@@ -460,7 +463,7 @@ class EntropyMinimizationDiscretizer private (
               .map{case ((k, point), c) => (k, (point, c))}
               .cache() // It will be iterated through "big indexes" loop
       
-      // Divide RDD according to the number of candidates
+      // Divide RDD into two categories according to a threshold
       val bigIndexes = initialCandidates
           .countByKey()
           .filter{case (_, c) => c > maxCandidates}

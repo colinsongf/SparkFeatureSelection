@@ -1,4 +1,4 @@
-package org.lidiagroup.hmourit.tfg.discretization
+package org.apache.spark.mllib.discretization
 
 import org.apache.spark.rdd.RDD
 import java.io.Serializable
