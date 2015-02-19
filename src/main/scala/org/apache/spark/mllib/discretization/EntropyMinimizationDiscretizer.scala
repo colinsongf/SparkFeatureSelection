@@ -60,14 +60,11 @@ class EntropyMinimizationDiscretizer private (
             require(intersect.size == s.size)
             s.toArray
           case None =>        
-            val countFeat2 = calcRawData
+            val countFeat = calcRawData
                 .distinct
                 .mapValues(d => 1L)
                 .reduceByKey(_ + _)
-            
-              println("countFeat: " + countFeat2.take(100).mkString("\n"))
-                
-            val countFeat = countFeat2.filter{case (_, c) => c > maxLimitBins}
+                .filter{case (_, c) => c > maxLimitBins}
             val cvars = countFeat.sortByKey().keys.collect()
             cvars       
       }
