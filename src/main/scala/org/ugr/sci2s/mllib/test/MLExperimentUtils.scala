@@ -275,6 +275,7 @@ object MLExperimentUtils {
 				(traValuesAndPreds, tstValuesAndPreds, classifficationTime)
 			} catch {
 				case iie: org.apache.hadoop.mapred.InvalidInputException => 
+          val nInstances = train.count() // to persist train and not to affect time measurements
 					val initStartTime = System.nanoTime()	
 					val classificationModel = classify(train)
 					val classificationTime = (System.nanoTime() - initStartTime) / 1e9
@@ -377,7 +378,7 @@ object MLExperimentUtils {
 				discretize match { 
 				  case (Some(disc), b) => 
 				    val (discTrData, discTstData, discTime) = discretization(
-								disc, trData, tstData, outputDir, i, save = true) 
+								disc, trData, tstData, outputDir, i, save = b) 
 					trData = discTrData
 					tstData = discTstData
 					taskTime = discTime
