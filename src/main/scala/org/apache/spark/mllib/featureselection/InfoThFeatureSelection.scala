@@ -12,7 +12,7 @@ import org.apache.spark.annotation.Experimental
 /**
  * Train a info-theory feature selection model according to a criterion.
  * @param criterionFactory Factory to create info-theory measurements for each feature.
- * @param poolSize In case of using pool optimization, it indicates pool increments.
+ * @param data RDD of LabeledPoint (discrete data).
  */
 class InfoThFeatureSelection private (
     val criterionFactory: InfoThCriterionFactory,
@@ -35,27 +35,6 @@ class InfoThFeatureSelection private (
     }
   
     
-  /**
-   * Wrapper method to calculate mutual information (MI) and conditional mutual information (CMI) 
-   * on several X variables with the capability of splitting the calculations into several chunks.
-   * @param applyMI Partial function that calculates MI and CMI on a subset of variables
-   * @param X variables to subset
-   * @param miniBatchFraction Percentage of simultaneous features to calculate MI and CMI (just in case).
-   * @return MI and CMI results for each X variable
-   */
-  @deprecated
-    protected def calcMutualInformation(
-       applyMI: Seq[Int] => RDD[((Int, Int),(Double, Double))], 
-       varX: Seq[Int], 
-       miniBatchFraction: Float) = {
-    	  val miniBatchSize = math.round(varX.length * miniBatchFraction)
-		  val it = varX.grouped(miniBatchSize)
-		  var results = Seq.empty[RDD[((Int, Int), (Double, Double))]]
-		  while (it.hasNext) applyMI(it.next) +: results
-		  for(i <- 1 until results.size) results(0).union(results(i))
-		  results(0)
-  }
-    
 	implicit val orderedByScore = new Ordering[(Int, InfoThCriterion)] {
 	    override def compare(a: (Int, InfoThCriterion), b: (Int, InfoThCriterion)) = {
 	    	a._2.score.compare(b._2.score) 
@@ -72,8 +51,6 @@ class InfoThFeatureSelection private (
    * Method that trains a info-theory selection model without using pool optimization.
    * @param data Data points represented by a byte array (first element is the class attribute).
    * @param nToSelect Number of features to select.
-   * @param nElements Number of instances.
-   * @param miniBatchFraction Fraction of data to be used in each iteration (just in case).
    * @return A list with the most relevant features and its scores
    */
    protected def selectFeaturesWithoutPool(
@@ -131,11 +108,10 @@ class InfoThFeatureSelection private (
    
    
  /**
-   * Method that trains a info-theory selection model using pool optimization.
+   * Method that trains a info-theory selection model using the optimization by pool.
    * @param data Data points represented by a byte array (first element is the class attribute).
    * @param nToSelect Number of features to select.
-   * @param nElements Number of instances.
-   * @param miniBatchFraction Fraction of data to be used in each iteration (just in case).
+   * @param poolSize Initial pool size (also used as pool increment).
    * @return A list with the most relevant features and its scores
    */
   protected def selectFeaturesWithPool(
@@ -200,11 +176,13 @@ class InfoThFeatureSelection private (
         
         // do missed calculations (for each previously selected attribute)
         val missedMiAndCmi = IT.miAndCmi(data, newFeatures.keys.toSeq, 
-            selected.map(_.feat), Some(label), nElements, nFeatures)        
-            missedMiAndCmi.foreach{ case ((feat, _), (mi, cmi)) => 
+                selected.map(_.feat), Some(label), nElements, nFeatures)
+              .collect()          
+              
+        missedMiAndCmi.foreach{ case ((feat, _), (mi, cmi)) => 
               newFeatures.get(feat) match {
                 case Some(crit) => crit.update(mi, cmi)
-                case None => 
+                case None =>
               }     
             }
         
@@ -224,7 +202,6 @@ class InfoThFeatureSelection private (
           .map({case F(f, c) => f + "\t" + "%.4f" format c})
           .mkString("\n")
       println("\n*** Selected features ***\nFeature\tScore\n" + strSelected)
-      println("Pool size: " + pool.size)
     }
 
     selected.reverse
@@ -239,7 +216,7 @@ class InfoThFeatureSelection private (
       throw new IllegalArgumentException("data doesn't have so many features")
     }    
     
-    byteData.persist(StorageLevel.MEMORY_ONLY_SER)
+    byteData.persist(StorageLevel.MEMORY_AND_DISK_SER)
     
     val selected = criterionFactory.getCriterion match {
       case _: InfoThCriterion with Bound if poolSize != 0 =>
@@ -269,8 +246,8 @@ object InfoThFeatureSelection {
    * @return  InfoThFeatureSelectionModel a feature selection model which contains a subset of selected features
    * 
    * Note: LabeledPoint data must be integer values in double representation 
-   * with a maximum range value of 256. In this manner, data can be transformed
-   * to byte directly. 
+   * with a maximum of 256 distinct values. In this manner, data can be transformed
+   * to byte class directly, making the selection process much more efficient. 
    */
   def train(criterionFactory: InfoThCriterionFactory,
       data: RDD[LabeledPoint],
