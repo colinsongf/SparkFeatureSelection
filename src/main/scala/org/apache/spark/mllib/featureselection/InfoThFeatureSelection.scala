@@ -33,20 +33,7 @@ class InfoThFeatureSelection private (
       case LabeledPoint(label, values: DenseVector) => 
             new BDV[Byte](label.toByte +: values.toArray.map(_.toByte))
     }
-  
-    
-	implicit val orderedByScore = new Ordering[(Int, InfoThCriterion)] {
-	    override def compare(a: (Int, InfoThCriterion), b: (Int, InfoThCriterion)) = {
-	    	a._2.score.compare(b._2.score) 
-	    }
-	}
-	
-	implicit val orderedByRelevance = new Ordering[(Int, InfoThCriterion)] {
-	    override def compare(a: (Int, InfoThCriterion), b: (Int, InfoThCriterion)) = {
-	    	a._2.relevance.compare(b._2.relevance) 
-	    }
-	}
-  
+
   /**
    * Method that trains a info-theory selection model without using pool optimization.
    * @param data Data points represented by a byte array (first element is the class attribute).
