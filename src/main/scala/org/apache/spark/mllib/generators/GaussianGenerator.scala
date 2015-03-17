@@ -1,4 +1,4 @@
-package org.lidiagroup.hmourit.tfg.generators
+package org.apache.spark.mllib.generators
 
 import breeze.stats.distributions.Rand
 import org.apache.spark.mllib.linalg.Vectors

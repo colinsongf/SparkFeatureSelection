@@ -1,4 +1,4 @@
-package org.lidiagroup.hmourit.tfg.generators
+package org.apache.spark.mllib.generators
 
 import org.apache.spark.SparkContext
 import org.apache.spark.SparkContext._

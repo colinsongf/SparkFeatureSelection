@@ -1,4 +1,4 @@
-package org.lidiagroup.hmourit.tfg.generators
+package org.apache.spark.mllib.generators
 
 /**
  * Abstract class for a Decision Tree
