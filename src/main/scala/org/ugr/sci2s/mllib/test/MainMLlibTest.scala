@@ -8,8 +8,7 @@ import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.SparkConf
 import org.apache.spark.SparkContext
 import org.ugr.sci2s.mllib.test.{MLExperimentUtils => MLEU}
-import org.apache.spark.mllib.discretization._
-import org.apache.spark.mllib.featureselection._
+import org.apache.spark.mllib.feature._
 
 class MLlibRegistrator extends KryoRegistrator {
   override def registerClasses(kryo: Kryo) {
@@ -59,8 +58,8 @@ object MainMLlibTest {
 		
 		// Discretization
 		val disc = (train: RDD[LabeledPoint]) => {
-			//val discretizedFeat = Some(((0 to 2) ++ (21 to 38) ++ (93 to 130) ++ (151 to 630)).toSeq)
-      val discretizedFeat: Option[Seq[Int]] = None
+			val discretizedFeat = Some(((0 to 2) ++ (21 to 38) ++ (93 to 130) ++ (151 to 630)).toSeq)
+      //val discretizedFeat: Option[Seq[Int]] = None
 			val nBins = MLEU.toInt(params.getOrElse("disc-nbins", "10"), 10)
 
 			println("*** Discretization method: Fayyad discretizer (MDLP)")

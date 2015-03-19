@@ -22,17 +22,20 @@ object KeelParser {
   	  new InstanceSet().parseHeaderFromString(arr, true)
   	  
   	  val conv = new Array[Map[String, Double]](Attributes.getNumAttributes)
-  	  for(i <- 0 until Attributes.getNumAttributes) {
+  	  for(i <- 0 until Attributes.getNumAttributes - 1) {
   		  conv(i) = Map()
   		  if(Attributes.getAttribute(i).getType == Attribute.NOMINAL){
   			  val values = Attributes.getAttribute(i)
   					  .getNominalValuesList()
   					  .asInstanceOf[java.util.Vector[String]]
   			  val gen = for (j <- 0 until values.size) yield (values.get(j) -> j.toDouble) 
-			  conv(i) = gen.toMap
-  		  }    	
+			    conv(i) = gen.toMap
+  		  } else {
+          val min = Attributes.getAttribute(i).getMinAttribute()
+          conv(i) = Map("min" -> min) 
+        } 
   	  }
-  	  
+  	  conv(Attributes.getNumAttributes - 1) = Map()      
   	  conv
   	}
   
@@ -41,8 +44,13 @@ object KeelParser {
 		val tokens = str split ","
 		require(tokens.length == conv.length)
 		
-		val arr = (conv, tokens).zipped
-				.map((c, elem) => c.getOrElse(elem, elem.toDouble))
+		val arr = (conv, tokens).zipped.map{(c, elem) => 
+            c.get("min") match {
+              case Some(min) => elem.toDouble - min
+              case None => c.getOrElse(elem, elem.toDouble)
+            }           
+        }
+        
 		val features = arr.slice(0, arr.length - 1)
 		val label = arr.last
 		

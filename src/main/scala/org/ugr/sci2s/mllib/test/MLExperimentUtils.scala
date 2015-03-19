@@ -1,5 +1,6 @@
 package org.ugr.sci2s.mllib.test
 
+import scala.util.Random
 import org.apache.spark.mllib.classification.ClassificationModel
 import org.apache.spark.rdd.RDD
 import org.apache.spark.SparkContext._
@@ -7,11 +8,8 @@ import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.mllib.util.ConfusionMatrix
 import org.apache.spark.annotation.Experimental
 import org.apache.spark.SparkContext
-import scala.util.Random
-import org.lidiagroup.hmourit.tfg._
 import scala.collection.immutable.List
-import org.apache.spark.mllib.discretization._
-import org.apache.spark.mllib.featureselection._
+import org.apache.spark.mllib.feature._
 import org.apache.spark.mllib.linalg.Vectors
 import org.apache.hadoop.mapreduce.lib.input.InvalidInputException
 import org.apache.spark.mllib.regression.LabeledPoint
@@ -129,7 +127,7 @@ object MLExperimentUtils {
 		}
 		
 		private def discretization(
-				discretize: (RDD[LabeledPoint]) => DiscretizerModel[LabeledPoint], 
+				discretize: (RDD[LabeledPoint]) => DiscretizerModel, 
 				train: RDD[LabeledPoint], 
 				test: RDD[LabeledPoint], 
 				outputDir: String,
@@ -144,16 +142,18 @@ object MLExperimentUtils {
 				val thresholds = sc.textFile(outputDir + "/discThresholds_" + iteration).filter(!_.isEmpty())
 									.map(parseThresholds).collect
 				
-				val discAlgorithm = new EntropyMinimizationDiscretizerModel(thresholds)
+				val discAlgorithm = new DiscretizerModel(thresholds)
 				val discTime = sc.textFile(outputDir + "/disc_time_" + iteration)
 						.filter(!_.isEmpty())
 						.map(_.toDouble)
 						.first
             
-		        val discData = discAlgorithm.discretize(train)
-		        val discTestData = discAlgorithm.discretize(test)
-		          
-		        // Save discretized data 
+		        val discData = discAlgorithm.transform(train.map(_.features)).zip(train.map(_.label))
+              .map{case (v, l) => LabeledPoint(l, v)}
+		        val discTestData = discAlgorithm.transform(test.map(_.features)).zip(test.map(_.label))
+              .map{case (v, l) => LabeledPoint(l, v)}
+		        
+            // Save discretized data 
 		        if(save) {
 		           discData.saveAsTextFile(outputDir + "/disc_train_" + iteration + ".csv")
 		           discTestData.saveAsTextFile(outputDir + "/disc_test_" + iteration + ".csv")       
@@ -166,17 +166,19 @@ object MLExperimentUtils {
 					val initStartTime = System.nanoTime()
 					val discAlgorithm = discretize(train)
 					val discTime = (System.nanoTime() - initStartTime) / 1e9
-					val discData = discAlgorithm.discretize(train)
-					val discTestData = discAlgorithm.discretize(test)
+          val discData = discAlgorithm.transform(train.map(_.features)).zip(train.map(_.label))
+            .map{case (v, l) => LabeledPoint(l, v)}
+          val discTestData = discAlgorithm.transform(test.map(_.features)).zip(test.map(_.label))
+            .map{case (v, l) => LabeledPoint(l, v)}
 		          
-		          // Save discretized data 
-		          if(save) {
-		             discData.saveAsTextFile(outputDir + "/disc_train_" + iteration + ".csv")
-		             discTestData.saveAsTextFile(outputDir + "/disc_test_" + iteration + ".csv")       
-		          } 
+          // Save discretized data 
+          if(save) {
+             discData.saveAsTextFile(outputDir + "/disc_train_" + iteration + ".csv")
+             discTestData.saveAsTextFile(outputDir + "/disc_test_" + iteration + ".csv")       
+          } 
 					
 					// Save the obtained thresholds in a HDFS file (as a sequence)
-					val thresholds = discAlgorithm.getThresholds.toArray.sortBy(_._1)
+					val thresholds = discAlgorithm.thresholds.toArray.sortBy(_._1)
 					val output = thresholds.foldLeft("")((str, elem) => str + 
 								elem._1 + "\t" + elem._2.mkString("\t") + "\n")
 					val parThresholds = sc.parallelize(Array(output), 1)
@@ -189,7 +191,7 @@ object MLExperimentUtils {
 		}
 		
 		private def featureSelection(
-				fs: (RDD[LabeledPoint]) => FeatureSelectionModel[LabeledPoint], 
+				fs: (RDD[LabeledPoint]) => SelectorModel, 
 				train: RDD[LabeledPoint], 
 				test: RDD[LabeledPoint], 
 				outputDir: String,
@@ -203,15 +205,15 @@ object MLExperimentUtils {
 			try {
 				val selectedAtts = sc.textFile(outputDir + "/FSscheme_" + iteration).filter(!_.isEmpty())
 										.map(parseSelectedAtts).collect				
-				val featureSelector = new InfoThFeatureSelectionModel(selectedAtts)
+				val featureSelector = new ChiSqSelectorModel(selectedAtts.map(_._1))
 				
 				val FSTime = sc.textFile(outputDir + "/fs_time_" + iteration)
 						.filter(!_.isEmpty())
 						.map(_.toDouble)
 						.first
          
-        val redTrain = featureSelector.select(train)
-        val redTest = featureSelector.select(test)
+        val redTrain = train.map(i => LabeledPoint(i.label, featureSelector.transform(i.features)))
+        val redTest = test.map(i => LabeledPoint(i.label, featureSelector.transform(i.features)))
         
           // Save reduced data 
           if(save) {
@@ -225,8 +227,8 @@ object MLExperimentUtils {
 					val initStartTime = System.nanoTime()
 					val featureSelector = fs(train)
 					val FSTime = (System.nanoTime() - initStartTime) / 1e9
-          val redTrain = featureSelector.select(train)
-          val redTest = featureSelector.select(test)
+          val redTrain = train.map(i => LabeledPoint(i.label, featureSelector.transform(i.features)))
+          val redTest = test.map(i => LabeledPoint(i.label, featureSelector.transform(i.features)))
           
           // Save reduced data 
           if(save) {
@@ -235,9 +237,9 @@ object MLExperimentUtils {
           }    
 					
 					// Save the obtained FS scheme in a HDFS file (as a sequence)					
-					val selectedAtts = featureSelector.getSelection
-					val output = selectedAtts.foldLeft("")((str, elem) => str + 
-                elem._1 + "\t" + elem._2 + "\n")
+					val selectedAtts = featureSelector.selectedFeatures
+          val output = selectedAtts.mkString("\n")
+					//val output = selectedAtts.foldLeft("")((str, elem) => str + elem._1 + "\t" + elem._2 + "\n")
 					val parFSscheme = sc.parallelize(Array(output), 1)
 					parFSscheme.saveAsTextFile(outputDir + "/FSscheme_" + iteration)
 					val strTime = sc.parallelize(Array(FSTime.toString), 1)
@@ -310,8 +312,8 @@ object MLExperimentUtils {
 		 */		
 		def executeExperiment(
 		    sc: SparkContext,
-		    discretize: (Option[(RDD[LabeledPoint]) => DiscretizerModel[LabeledPoint]], Boolean), 
-		    featureSelect: (Option[(RDD[LabeledPoint]) => FeatureSelectionModel[LabeledPoint]], Boolean), 
+		    discretize: (Option[(RDD[LabeledPoint]) => DiscretizerModel], Boolean), 
+		    featureSelect: (Option[(RDD[LabeledPoint]) => SelectorModel], Boolean), 
 		    classify: Option[(RDD[LabeledPoint]) => ClassificationModel],
 		    inputData: (Any, String, Boolean), 
 		    outputDir: String, 
