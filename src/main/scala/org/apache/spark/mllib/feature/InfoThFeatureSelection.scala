@@ -1,9 +1,9 @@
-package org.apache.spark.mllib.featureselection
+package org.apache.spark.mllib.feature
 
 import org.apache.spark.rdd.RDD
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.SparkContext._
-import org.apache.spark.mllib.featureselection.{InfoTheory => IT}
+import org.apache.spark.mllib.feature.{InfoTheory => IT}
 import org.apache.spark.storage.StorageLevel
 import org.apache.spark.mllib.linalg.{DenseVector, SparseVector}
 import breeze.linalg.{DenseVector => BDV, SparseVector => BSV, Vector => BV}
@@ -195,13 +195,8 @@ class InfoThFeatureSelection private (
   }
   
 
-  protected def run(nToSelect: Int,
-      poolSize: Int = 30): 
-        InfoThFeatureSelectionModel = {
-    
-    if (nToSelect > nFeatures) {
-      throw new IllegalArgumentException("data doesn't have so many features")
-    }    
+  protected def run(nToSelect: Int, poolSize: Int = 30) = {    
+    require(nToSelect > nFeatures)
     
     byteData.persist(StorageLevel.MEMORY_AND_DISK_SER)
     
@@ -218,8 +213,8 @@ class InfoThFeatureSelection private (
     val strMRMR = selected.map({case F(feat, rel) => feat + "\t" + "%.4f" format rel}).mkString("\n")
     println("\n*** mRMR features ***\nFeature\tScore\n" + strMRMR)
 
-    new InfoThFeatureSelectionModel(selected.map({case F(feat, rel) => (feat - 1, rel) }).toArray)
-  }
+    new SelectorModel(selected.map({case F(feat, rel) => feat - 1}).toArray)
+    }
 }
 
 object InfoThFeatureSelection {

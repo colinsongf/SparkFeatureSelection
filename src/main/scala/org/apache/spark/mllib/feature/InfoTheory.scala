@@ -1,4 +1,4 @@
-package org.apache.spark.mllib.featureselection
+package org.apache.spark.mllib.feature
 
 import org.apache.spark.rdd.RDD
 import org.apache.spark.SparkContext._
@@ -15,7 +15,27 @@ import org.apache.spark.mllib.util.{SearchUtils => SU}
  */
 object InfoTheory {
 
-	private val log2 = { x: Double => math.log(x) / math.log(2) }  
+	private val log2 = { x: Double => math.log(x) / math.log(2) } 
+  /**
+   * Calculate entropy for the given frequencies.
+   *
+   * @param freqs Frequencies of each different class
+   * @param n Number of elements
+   */
+  def entropy(freqs: Seq[Long], n: Long): Double = {
+    freqs.aggregate(0.0)({ case (h, q) =>
+      h + (if (q == 0) 0  else (q.toDouble / n) * (math.log(q.toDouble / n) / math.log(2)))
+    }, { case (h1, h2) => h1 + h2 }) * -1
+  }
+
+  /**
+   * Calculate entropy for the given frequencies.
+   *
+   * @param freqs Frequencies of each different class
+   */
+  def entropy(freqs: Seq[Long]): Double = {
+    entropy(freqs, freqs.reduce(_ + _))
+  }
 	
     private val createCombiner: ((Byte, Long)) => (Long, Long, Long, Long, Long, Long, Long) = {
       case (1, q) => (q, 0, 0, 0, 0, 0, 0)

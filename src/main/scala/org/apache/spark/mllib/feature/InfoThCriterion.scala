@@ -1,4 +1,4 @@
-package org.apache.spark.mllib.featureselection
+package org.apache.spark.mllib.feature
 
 /**
  * Trait which declares needed methods to define a criterion for Feature Selection

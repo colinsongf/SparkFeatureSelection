@@ -1,4 +1,4 @@
-package org.apache.spark.mllib.discretization
+package org.apache.spark.mllib.feature
 
 import scala.collection.mutable
 import org.apache.spark.SparkContext._
@@ -6,8 +6,9 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.storage.StorageLevel
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.mllib.linalg._
+
 import breeze.linalg.{SparseVector => BSV}
-import org.apache.spark.mllib.util.SearchUtils
+
 
 /**
  * This class contains methods to calculate thresholds to discretize continuous values with the
@@ -19,7 +20,7 @@ import org.apache.spark.mllib.util.SearchUtils
 class EntropyMinimizationDiscretizer private (
     val data: RDD[LabeledPoint]) extends Serializable {
 
-  private val log2 = { x: Double => math.log(x) / math.log(2) }  
+private val log2 = { x: Double => math.log(x) / math.log(2) }  
   private val isBoundary = (f1: Array[Long], f2: Array[Long]) => {
       (f1, f2).zipped.map(_ + _).filter(_ != 0).size > 1
   }
@@ -28,6 +29,8 @@ class EntropyMinimizationDiscretizer private (
   
   val labels2Int = data.map(_.label).distinct.collect.zipWithIndex.toMap
   val nLabels = labels2Int.size
+  
+
   
   /**
    * Get information about the attributes in order to perform a correct discretization process.
@@ -158,7 +161,7 @@ class EntropyMinimizationDiscretizer private (
       if (nCands > 0) {
         cands = cands.coalesce(partitions(nCands))
         //Selects one threshold among the candidates and returns two partitions to recurse
-        evalThresholds(cands, lastThresh, nLabels) match {
+        evalThresholds(cands, lastThresh) match {
           case Some(th) =>
             result = th +: result
             stack.enqueue(((bounds._1, th), Some(th)))
@@ -218,8 +221,7 @@ class EntropyMinimizationDiscretizer private (
    */
   private def evalThresholds(
       candidates: RDD[(Float, Array[Long])],
-      lastSelected : Option[Float],
-      nLabels: Int) = {
+      lastSelected : Option[Float]) = {
 
     val numPartitions = candidates.partitions.size
 
@@ -399,7 +401,7 @@ class EntropyMinimizationDiscretizer private (
       // Generate pairs ((attribute, value), class count)
       // In case of sparse data, we take into account whether 
       // the set of continuous attributes is too big to round decimals
-      val featureValues = dense match{
+      val featureValues = dense match {
         case true => 
           val bContinuousVars = sc.broadcast(continuousVars)
           data.flatMap({case LabeledPoint(label, values) =>
@@ -418,17 +420,16 @@ class EntropyMinimizationDiscretizer private (
         case false =>
           val bContVars = sc.broadcast(continuousVars)
           
-          data.flatMap({case LabeledPoint(label, values: SparseVector) =>
+          data.flatMap({case LabeledPoint(label, values: Vector) =>
             val c = Array.fill[Long](nLabels)(0L)
-            val arr = values.values.map{ case d => 
-                d.toFloat
+            val v = FeatureUtils.compress(values, bContVars.value)
+            v match {
+              case SparseVector(size, newind, newval) => 
+                c(bLabels2Int.value(label)) = 1L
                 //BigDecimal(d).setScale(6, BigDecimal.RoundingMode.HALF_UP).toFloat
+                for(i <- 0 until newind.size) yield ((newind(i), newval(i).toFloat), c)
             }
-            c(bLabels2Int.value(label)) = 1L
-            for(i <- 0 until values.indices.size 
-                if SearchUtils.binarySearch(bContVars.value, values.indices(i))) 
-              yield ((values.indices(i), arr(i)), c)            
-            })
+          })
       }
     
       // Group elements by attribute and value (distinct values)
@@ -489,7 +490,7 @@ class EntropyMinimizationDiscretizer private (
                           .sortByKey() // Important!
                           .collect
                           
-      new EntropyMinimizationDiscretizerModel(thresholds)
+      new DiscretizerModel(thresholds)
   }
 
 }
@@ -506,11 +507,10 @@ object EntropyMinimizationDiscretizer {
    * @return A EntropyMinimizationDiscretizerModel with the subsequent thresholds for discretization.
    */
   def train(
-      input: RDD[LabeledPoint],
-      continuousFeaturesIndexes: Option[Seq[Int]],
-      maxBins: Int = Byte.MaxValue - Byte.MinValue + 1,
-      elementsByPart: Int = 10000)
-    : EntropyMinimizationDiscretizerModel = {
+    input: RDD[LabeledPoint],
+    continuousFeaturesIndexes: Option[Seq[Int]],
+    maxBins: Int = Byte.MaxValue - Byte.MinValue + 1,
+    elementsByPart: Int = 10000) = {
 
     new EntropyMinimizationDiscretizer(input).runAll(continuousFeaturesIndexes, elementsByPart, maxBins)
 

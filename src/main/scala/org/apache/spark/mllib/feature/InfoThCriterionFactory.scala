@@ -1,4 +1,4 @@
-package org.apache.spark.mllib.featureselection
+package org.apache.spark.mllib.feature
 
 /**
  * Factory class that generates a wide range of info-theory criterions [1] to 
