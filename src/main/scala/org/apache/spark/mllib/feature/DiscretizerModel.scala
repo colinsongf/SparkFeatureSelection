@@ -1,24 +1,56 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package org.apache.spark.mllib.feature
 
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.rdd.RDD
 import org.apache.spark.mllib.linalg._
+import org.apache.spark.annotation.Experimental
 
 /**
- * This class provides the methods to discretize data, given a list of thresholds.
- * @param thresholds Thresholds by feature used to discretize (each one must be sorted)
+ * Generic discretizer model that transform data given a list of thresholds by feature.
+ * @param thresholds Thresholds defined by feature (both must be sorted)
  *  
+ * Note: checking the second sorting condition can be much more time-consuming. 
+ * We omit this condition.
  */
+
+@Experimental
 class DiscretizerModel (val thresholds: Array[(Int, Seq[Float])]) extends VectorTransformer {
   
+  require(isSorted(thresholds.map(_._1)), "Array has to be sorted asc")
+  
+  protected def isSorted(array: Array[Int]): Boolean = {
+    var i = 1
+    while (i < array.length) {
+      if (array(i) < array(i-1)) return false
+      i += 1
+    }
+    true
+  }
+  
   /**
-   * Discretizes values in a given example using a set of thresholds.
+   * Discretizes values for a single example using thresholds.
    *
    * @param data Vector.
-   * @return RDD with data discretized (with bins from 1 to n).
+   * @return Discretized vector (with bins from 1 to n).
    */
   override def transform(data: Vector) = {
-    // thresholds must be sorted by key index to perform the evaluation  
     data match {
       case SparseVector(size, indices, values) =>
         var newValues = Array.empty[Double]
@@ -38,8 +70,7 @@ class DiscretizerModel (val thresholds: Array[(Int, Seq[Float])]) extends Vector
             i += 1
           }
         }
-        // the `index` array inside sparse vector object will not be changed,
-        // so we can re-use it to save memory.
+        // the `index` array inside sparse vector object will not be changed
         Vectors.sparse(size, indices, newValues)
         
         case DenseVector(values) =>
@@ -64,13 +95,12 @@ class DiscretizerModel (val thresholds: Array[(Int, Seq[Float])]) extends Vector
   }
 
   /**
-   * Discretizes values in a given dataset using a set of thresholds.
+   * Discretizes values in a given dataset using thresholds.
    *
    * @param data RDD with continuous-valued vectors.
-   * @return RDD with data discretized (with bins from 1 to n).
+   * @return RDD with discretized data (bins from 1 to n).
    */
   override def transform(data: RDD[Vector]) = {
-    // thresholds must be sorted by key index to perform the evaluation
     val bc_thresholds = data.context.broadcast(thresholds)    
     data.map {
       case SparseVector(size, indices, values) =>
@@ -123,7 +153,7 @@ class DiscretizerModel (val thresholds: Array[(Int, Seq[Float])]) extends Vector
    * @param thresholds Thresholds used to assign a discrete value
    */
   private def assignDiscreteValue(value: Double, thresholds: Seq[Float]) = {
-    if(thresholds.isEmpty) 1 else if (value > thresholds.last) thresholds.size + 1
+    if(thresholds.isEmpty) 1 else if (value > thresholds.last) thresholds.size + 1 
       else thresholds.indexWhere{value <= _} + 1
   }
 

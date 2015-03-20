@@ -24,21 +24,21 @@
     </repository>
   </repositories>
   <dependencies>
-  	<!-- Version 0.7 includes in Spark 1.0 does not work very well with breeze -->
-	<dependency>
+  	<!-- Version 0.7 included in Spark 1.0 does not work very well with breeze -->
+<!--	<dependency>
 		<groupId>org.scalanlp</groupId>
 		<artifactId>breeze_2.10</artifactId>
 		<version>0.9</version>
-	</dependency>
+	</dependency> -->
     <dependency> <!-- Spark dependency -->
       <groupId>org.apache.spark</groupId>
       <artifactId>spark-core_2.10</artifactId>
-      <version>1.0.0</version>
+      <version>1.3.0</version>
     </dependency>
     <dependency>
       <groupId>org.apache.spark</groupId>
       <artifactId>spark-mllib_2.10</artifactId>
-      <version>1.0.0</version>
+      <version>1.3.0</version>
     </dependency>
     <dependency>
   	<groupId>com.github.fommil.netlib</groupId>
