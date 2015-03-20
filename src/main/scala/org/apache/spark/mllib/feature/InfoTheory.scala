@@ -20,6 +20,7 @@ package org.apache.spark.mllib.feature
 import breeze.linalg.{DenseVector => BDV, SparseVector => BSV, Vector => BV}
 
 import org.apache.spark.rdd.RDD
+import org.apache.spark.SparkContext._ 
 import org.apache.spark.broadcast.Broadcast
 
 /**
@@ -50,7 +51,7 @@ object InfoTheory {
   private[feature] def entropy(freqs: Seq[Long]): Double = {
     entropy(freqs, freqs.reduce(_ + _))
   }
-	
+
   private val createCombiner: ((Byte, Long)) => (Long, Long, Long, Long, Long, Long, Long) = {
     case (1, q) => (q, 0, 0, 0, 0, 0, 0)
     case (2, q) => (0, q, 0, 0, 0, 0, 0)
@@ -97,7 +98,7 @@ object InfoTheory {
      
      for(xind <- varX.value){
        for(yind <- varY.value) {
-      	 val indexes = if(multY) (xind, yind) else xind
+         val indexes = if(multY) (xind, yind) else xind
          pairs = ((indexes, dv(xind), dv(yind), zval), 1L) +: pairs
        }
      }     
@@ -135,11 +136,11 @@ object InfoTheory {
     val bvarY = sc.broadcast(varY)
     val bvarZ = sc.broadcast(varZ)
     
-    //Common function to generate pairs, it choose between sparse and dense processing 
+    // Common function to generate pairs, it choose between sparse and dense processing 
     data.first match {
       case v: BDV[Byte] =>
-	      val generator = DenseGenerator(_: BV[Byte], bvarX, bvarY, bvarZ)
-  	    calculateMIDenseData(data, generator, varY(0), n)
+        val generator = DenseGenerator(_: BV[Byte], bvarX, bvarY, bvarZ)
+        calculateMIDenseData(data, generator, varY(0), n)
       case v: BSV[Byte] =>     
         // Not implemented yet!
         throw new NotImplementedError()
@@ -161,32 +162,31 @@ object InfoTheory {
       pairsGenerator: BV[Byte] => Seq[((Any, Byte, Any, Option[Byte]), Long)],
       firstY: Int,
       n: Long) = {
-	
-	  val combinations = data.flatMap(pairsGenerator)
-	    .reduceByKey(_ + _)
-		   // Split each combination keeping instance keys
-	    .flatMap {
+
+    val combinations = data.flatMap(pairsGenerator).reduceByKey(_ + _)
+    // Split each combination keeping instance keys
+      .flatMap {
       case ((k, x, y, Some(z)), q) =>          
-        Seq(((k, 1:Byte /*"xz"*/ , (x, z)),    (Set(y), q)),
-            ((k, 2:Byte /*"yz"*/ , (y, z)),    (Set(x), q)),
-            ((k, 3:Byte /*"xyz"*/, (x, y, z)), (Set.empty, q)),
-            ((k, 4:Byte /*"z"*/  , z),         (Set((x, y)), q)),
-            ((k, 5:Byte /*"xy"*/ , (x, y)),    (Set.empty,  q)),
-            ((k, 6:Byte /*"x"*/  , x),         (Set(y), q)),
-            ((k, 7:Byte /*"y"*/  , y),         (Set(x), q)))
+        Seq(((k, 1:Byte /* "xz" */ , (x, z)),    (Set(y), q)),
+            ((k, 2:Byte /* "yz" */ , (y, z)),    (Set(x), q)),
+            ((k, 3:Byte /* "xyz" */, (x, y, z)), (Set.empty, q)),
+            ((k, 4:Byte /* "z" */  , z),         (Set((x, y)), q)),
+            ((k, 5:Byte /* "xy" */ , (x, y)),    (Set.empty,  q)),
+            ((k, 6:Byte /* "x" */  , x),         (Set(y), q)),
+            ((k, 7:Byte /* "y" */  , y),         (Set(x), q)))
       case ((k, x, y, None), q) =>
-        Seq(((k, 5:Byte /*"xy"*/ , (x, y)),    (Set.empty,  q)),
-            ((k, 6:Byte /*"x"*/  , x),         (Set(y), q)),
-            ((k, 7:Byte /*"y"*/  , y),         (Set(x), q)))
-	    }
-	
-	    // Count frequencies for each combination
-	    val grouped_frequencies = combinations.reduceByKey({
-        case ((keys1, q1), (keys2, q2)) => (keys1 ++ keys2, q1 + q2)
-      })      
-      // Separate by origin of combinations
-      .flatMap({
-        case ((k, ref, value), (keys, q))  => 
+        Seq(((k, 5:Byte /* "xy" */ , (x, y)),    (Set.empty,  q)),
+            ((k, 6:Byte /* "x" */  , x),         (Set(y), q)),
+            ((k, 7:Byte /* "y" */  , y),         (Set(x), q)))
+    }
+
+    // Count frequencies for each combination
+    val grouped_frequencies = combinations.reduceByKey({
+      case ((keys1, q1), (keys2, q2)) => (keys1 ++ keys2, q1 + q2)
+    })      
+    // Separate by origin of combinations
+    .flatMap({
+      case ((k, ref, value), (keys, q))  => 
           val none: Option[Byte] = None
           ref match {
             case 1 => 
@@ -212,33 +212,33 @@ object InfoTheory {
               val y = value.asInstanceOf[Byte]
               for (x <- keys) yield ((k, x.asInstanceOf[Byte], y, none), (7:Byte, q))
           }        
-      })
-      // Group by origin
-      .combineByKey(createCombiner, mergeValues, mergeCombiners)
-	      
-      // Calculate MI and CMI by instance
-	    grouped_frequencies.map({case ((k, _, _, z), (qxz, qyz, qxyz, qz, qxy, qx, qy)) =>
-        // Select id
-        val finalKey = k match {
-          case (kx: Int, ky: Int) => (kx, ky)
-          case kx: Int => (kx, firstY)
-        }           
-        // Choose between MI or CMI
-        z match {
-          case Some(_) =>
-            val pz = qz.toDouble / n
-            val pxyz = (qxyz.toDouble / n) / pz
-            val pxz = (qxz.toDouble / n) / pz
-            val pyz = (qyz.toDouble / n) / pz
-            (finalKey, (0.0, pz * pxyz * log2(pxyz / (pxz * pyz))))
-          case None => 
-            val pxy = qxy.toDouble / n
-            val px = qx.toDouble / n
-            val py = qy.toDouble / n
-            (finalKey, (pxy * log2(pxy / (px * py)), 0.0))
-        }
-	    })
-	    // Compute the final result by attribute
-	    .reduceByKey({ case ((mi1, cmi1), (mi2, cmi2)) => (mi1 + mi2, cmi1 + cmi2) })
+    })
+    // Group by origin
+    .combineByKey(createCombiner, mergeValues, mergeCombiners)
+
+    // Calculate MI and CMI by instance
+    grouped_frequencies.map({case ((k, _, _, z), (qxz, qyz, qxyz, qz, qxy, qx, qy)) =>
+    // Select id
+      val finalKey = k match {
+        case (kx: Int, ky: Int) => (kx, ky)
+        case kx: Int => (kx, firstY)
+      }           
+      // Choose between MI or CMI
+      z match {
+        case Some(_) =>
+          val pz = qz.toDouble / n
+          val pxyz = (qxyz.toDouble / n) / pz
+          val pxz = (qxz.toDouble / n) / pz
+          val pyz = (qyz.toDouble / n) / pz
+          (finalKey, (0.0, pz * pxyz * log2(pxyz / (pxz * pyz))))
+        case None => 
+          val pxy = qxy.toDouble / n
+          val px = qx.toDouble / n
+          val py = qy.toDouble / n
+          (finalKey, (pxy * log2(pxy / (px * py)), 0.0))
+      }
+    })
+    // Compute the final result by attribute
+    .reduceByKey({ case ((mi1, cmi1), (mi2, cmi2)) => (mi1 + mi2, cmi1 + cmi2) })
   }
 }

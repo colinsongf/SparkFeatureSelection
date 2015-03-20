@@ -21,6 +21,7 @@ import scala.collection.mutable
 
 import breeze.linalg.{SparseVector => BSV}
 
+import org.apache.spark.SparkContext._ 
 import org.apache.spark.Logging
 import org.apache.spark.rdd.RDD
 import org.apache.spark.mllib.regression.LabeledPoint
@@ -28,8 +29,7 @@ import org.apache.spark.mllib.linalg._
 
 /**
  * Entropy minimization discretizer based on Minimum Description Length Principle (MDLP)
- * proposed by Fayyad and Irani in Multi-Interval Discretization of Continuous-Valued
- * Attributes (1993) [1].
+ * proposed by Fayyad and Irani in 1993 [1].
  * 
  * [1] Fayyad, U., & Irani, K. (1993). 
  * "Multi-interval discretization of continuous-valued attributes for classification learning."
@@ -49,11 +49,11 @@ class MDLPDiscretizer private (val data: RDD[LabeledPoint]) extends Serializable
   private val nLabels = labels2Int.size
   
   /**
-   * Get information about the attributes in order to perform a proper discretization.
+   * Get information about the attributes before performing discretization.
    * 
-   * @param contFeat Subset of indexes to be considered (in case it is not specified, they are calculated).
+   * @param contIndices Indexes to discretize (if not specified, they are calculated).
    * @param nFeatures Total number of input features.
-   * @param dense If the dataset is dense or not.
+   * @param dense Data is dense or not.
    * @return Indexes of continuous features.
    * 
    */  
@@ -131,7 +131,7 @@ class MDLPDiscretizer private (val data: RDD[LabeledPoint]) extends Serializable
           accumFreqs = (accumFreqs, freqs).zipped.map(_ + _)
         }
        
-        // Last point to add (evaluation)
+        // Evaluate the last point in current partition with the first one in the next partition
         val lastPoint = if(index < (numPartitions - 1)) {
           bcFirsts.value(index + 1) match {
             case Some((k, x)) => 
@@ -177,7 +177,7 @@ class MDLPDiscretizer private (val data: RDD[LabeledPoint]) extends Serializable
       val nCands = cands.count
       if (nCands > 0) {
         cands = cands.coalesce(partitions(nCands))
-        //Selects one threshold among the candidates and returns two partitions to recurse
+        // Selects one threshold among the candidates and returns two partitions to recurse
         evalThresholds(cands, lastThresh) match {
           case Some(th) =>
             result = th +: result
@@ -210,7 +210,8 @@ class MDLPDiscretizer private (val data: RDD[LabeledPoint]) extends Serializable
     while(stack.length > 0 && result.size < maxBins){
       val (bounds, lastThresh) = stack.dequeue
       // Filter candidates within the last range added
-      val newCandidates = candidates.filter({ case (th, _) => th > bounds._1 && th <= bounds._2 })      
+      val newCandidates = candidates.filter({ case (th, _) => 
+        th > bounds._1 && th <= bounds._2 })      
       if (newCandidates.size > 0) {
         evalThresholds(newCandidates, lastThresh, nLabels) match {
           case Some(th) =>
@@ -257,7 +258,7 @@ class MDLPDiscretizer private (val data: RDD[LabeledPoint]) extends Serializable
     val result = candidates.mapPartitionsWithIndex({ (slice, it) =>
       // accumulate frequencies from left to the current partition
       var leftTotal = Array.fill(nLabels)(0L)
-      for (i <- 0 until slice) leftTotal = (leftTotal, bcTotalsByPart.value(i)).zipped.map(_ + _)        
+      for (i <- 0 until slice) leftTotal = (leftTotal, bcTotalsByPart.value(i)).zipped.map(_ + _)
       var entropyFreqs = Seq.empty[(Float, Array[Long], Array[Long], Array[Long])]
       // ... and from the current partition to the most-right partition
       for ((cand, freqs) <- it) {
@@ -400,22 +401,20 @@ class MDLPDiscretizer private (val data: RDD[LabeledPoint]) extends Serializable
           bContinuousVars.value.map{ k =>
             val c = Array.fill[Long](nLabels)(0L)
             c(bLabels2Int.value(label)) = 1L
-            //BigDecimal(d).setScale(6, BigDecimal.RoundingMode.HALF_UP).toFloat
+            // BigDecimal(d).setScale(6, BigDecimal.RoundingMode.HALF_UP).toFloat
             ((k, values(k).toFloat), c)
           }                   
         })
       case false =>
         val bContVars = sc.broadcast(continuousVars)          
-        data.flatMap({case LabeledPoint(label, values: Vector) =>
+        data.flatMap{case LabeledPoint(label, values: Vector) =>
           val c = Array.fill[Long](nLabels)(0L)
           val v = FeatureUtils.compress(values, bContVars.value)
-          v match {
-            case SparseVector(size, newind, newval) => 
-              c(bLabels2Int.value(label)) = 1L
-              //BigDecimal(d).setScale(6, BigDecimal.RoundingMode.HALF_UP).toFloat
-              for(i <- 0 until newind.size) yield ((newind(i), newval(i).toFloat), c)
-          }
-        })
+          val sv = v.asInstanceOf[SparseVector]
+          c(bLabels2Int.value(label)) = 1L
+          // BigDecimal(d).setScale(6, BigDecimal.RoundingMode.HALF_UP).toFloat
+          for(i <- 0 until sv.size) yield ((sv.indices(i), sv.values(i).toFloat), c)
+        }
     }
     
     // Group elements by attribute and value (distinct points)

@@ -20,6 +20,7 @@ package org.apache.spark.mllib.feature
 
 import breeze.linalg.{DenseVector => BDV, SparseVector => BSV, Vector => BV}
 
+import org.apache.spark.SparkContext._ 
 import org.apache.spark.rdd.RDD
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.mllib.feature.{InfoTheory => IT}
@@ -45,12 +46,12 @@ class InfoThSelector private[feature] (
   // Case class for criterions by feature
   protected case class F(feat: Int, crit: Double)
     
-	val (nFeatures, isDense) = data.first.features match {
-		case v: SparseVector => (v.size, false)
-		case v: DenseVector => (v.size, true)			  
-	}
+  val (nFeatures, isDense) = data.first.features match {
+    case v: SparseVector => (v.size, false)
+    case v: DenseVector => (v.size, true)
+  }
   
-	val byteData: RDD[BV[Byte]] = data.map {
+  val byteData: RDD[BV[Byte]] = data.map {
     case LabeledPoint(label, values: SparseVector) => 
       new BSV[Byte](0 +: values.indices.map(_ + 1), 
         label.toByte +: values.values.toArray.map(_.toByte), values.indices.size + 1)
@@ -66,7 +67,7 @@ class InfoThSelector private[feature] (
    * @return A list with the most relevant features and its scores.
    * 
    */
-  private[feature] def selectFeaturesWithoutPool(data: RDD[BV[Byte]], nToSelect: Int) = {            
+  private[feature] def selectFeaturesWithoutPool(data: RDD[BV[Byte]], nToSelect: Int) = {
     
     val nElements = data.count()
     val nFeatures = data.first.size - 1
@@ -81,7 +82,7 @@ class InfoThSelector private[feature] (
       .take(nToSelect)
       .map({case ((f, _), (mi, _)) => f + "\t" + "%.4f" format mi})
       .mkString("\n")
-    //println("\n*** MaxRel features ***\nFeature\tScore\n" + strRels)  
+    // println("\n*** MaxRel features ***\nFeature\tScore\n" + strRels)  
     // get maximum and select it
     val firstMax = pool.maxBy(_._2.score)
     var selected = Seq(F(firstMax._1, firstMax._2.score))
@@ -133,7 +134,7 @@ class InfoThSelector private[feature] (
     // Print most relevant features
     val strRels = orderedRels.take(nToSelect)
       .map({case (f, c) => f + "\t" + "%.4f" format c}).mkString("\n")
-    //println("\n*** MaxRel features ***\nFeature\tScore\n" + strRels)
+    // println("\n*** MaxRel features ***\nFeature\tScore\n" + strRels)
   
     // extract initial pool
     val initialPoolSize = math.min(math.max(poolSize, nToSelect), orderedRels.length)
@@ -230,7 +231,7 @@ object InfoThSelector {
    * @param   criterionFactory Initialized criterion to use in this selector
    * @param   data RDD of LabeledPoint (discrete data in range of 256 values).
    * @param   nToSelect maximum number of features to select
-   * @param   poolSize number of features to be used in pool optimization in order to alleviate calculations.
+   * @param   poolSize number of features to be used in pool optimization.
    * @return  A feature selection model which contains a subset of selected features
    * 
    * Note: LabeledPoint data must be integer values in double representation 
@@ -238,7 +239,11 @@ object InfoThSelector {
    * to byte class directly, making the selection process much more efficient. 
    * 
    */
-  def train(criterionFactory: FT, data: RDD[LabeledPoint], nToSelect: Int = 100, poolSize: Int = 100) = {
+  def train(
+      criterionFactory: FT, 
+      data: RDD[LabeledPoint],
+      nToSelect: Int = 100,
+      poolSize: Int = 100) = {
     new InfoThSelector(criterionFactory, data).run(nToSelect, poolSize)
   }
 }
