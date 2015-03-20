@@ -66,7 +66,7 @@ object MainMLlibTest {
 			//println("*** Features to discretize: " + discretizedFeat.get.mkString(","))
 			println("*** Number of bins: " + nBins)			
 
-			val discretizer = EntropyMinimizationDiscretizer.train(train,
+			val discretizer = MDLPDiscretizer.train(train,
 					discretizedFeat, // continuous features 
 					nBins) // max number of values per feature
 		    discretizer
@@ -92,7 +92,7 @@ object MainMLlibTest {
 			println("*** Number of features to select: " + nToSelect)
 			println("*** Pool size: " + nPool)
       
-			val model = InfoThFeatureSelection.train(criterion, 
+			val model = InfoThSelector.train(criterion, 
 		      data,
 		      nToSelect, // number of features to select
 		      nPool) // number of features in pool
