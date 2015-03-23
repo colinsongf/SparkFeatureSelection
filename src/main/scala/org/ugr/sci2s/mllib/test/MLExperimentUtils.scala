@@ -205,7 +205,7 @@ object MLExperimentUtils {
 			try {
 				val selectedAtts = sc.textFile(outputDir + "/FSscheme_" + iteration).filter(!_.isEmpty())
 										.map(parseSelectedAtts).collect				
-				val featureSelector = new ChiSqSelectorModel(selectedAtts.map(_._1))
+				val featureSelector = new SelectorModel(selectedAtts.map(_._1))
 				
 				val FSTime = sc.textFile(outputDir + "/fs_time_" + iteration)
 						.filter(!_.isEmpty())
