@@ -147,10 +147,12 @@ object MLExperimentUtils {
 						.filter(!_.isEmpty())
 						.map(_.toDouble)
 						.first
-            
-		        val discData = discAlgorithm.transform(train.map(_.features)).zip(train.map(_.label))
+            // More efficient than by-instance version
+		        val discData = discAlgorithm.transform(train.map(_.features))
+              .zip(train.map(_.label))
               .map{case (v, l) => LabeledPoint(l, v)}
-		        val discTestData = discAlgorithm.transform(test.map(_.features)).zip(test.map(_.label))
+            val discTestData = discAlgorithm.transform(test.map(_.features))
+              .zip(test.map(_.label))
               .map{case (v, l) => LabeledPoint(l, v)}
 		        
             // Save discretized data 
@@ -166,9 +168,12 @@ object MLExperimentUtils {
 					val initStartTime = System.nanoTime()
 					val discAlgorithm = discretize(train)
 					val discTime = (System.nanoTime() - initStartTime) / 1e9
-          val discData = discAlgorithm.transform(train.map(_.features)).zip(train.map(_.label))
+          // More efficient than by-instance version
+          val discData = discAlgorithm.transform(train.map(_.features))
+            .zip(train.map(_.label))
             .map{case (v, l) => LabeledPoint(l, v)}
-          val discTestData = discAlgorithm.transform(test.map(_.features)).zip(test.map(_.label))
+          val discTestData = discAlgorithm.transform(test.map(_.features))
+            .zip(test.map(_.label))
             .map{case (v, l) => LabeledPoint(l, v)}
 		          
           // Save discretized data 
