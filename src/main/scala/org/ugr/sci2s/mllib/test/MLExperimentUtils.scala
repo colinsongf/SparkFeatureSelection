@@ -51,10 +51,10 @@ object MLExperimentUtils {
   			(tokens(0).toDouble, tokens(1).toDouble)
   		}
   
-  		def computePredictions(model: ClassificationModel, data: RDD[LabeledPoint], threshold: Double = .5) =
+  		def computePredictions(model: ClassificationModelAdapter, data: RDD[LabeledPoint], threshold: Double = .5) =
 			  data.map(point => (point.label, if(model.predict(point.features) >= threshold) 1.0 else 0.0))
 
- 		  def computePredictions (model: ClassificationModel, data: RDD[LabeledPoint]) =
+ 		  def computePredictions (model: ClassificationModelAdapter, data: RDD[LabeledPoint]) =
 			  data.map(point => (point.label, model.predict(point.features)))
 		
 		  def computeAccuracy (valuesAndPreds: RDD[(Double, Double)]) = 
@@ -75,15 +75,15 @@ object MLExperimentUtils {
 		}
 		
 		@Experimental
-		private def doTraining (training: (RDD[LabeledPoint]) => ClassificationModel, isBinary: Boolean,
+		private def doTraining (training: (RDD[LabeledPoint]) => ClassificationModelAdapter, isBinary: Boolean,
 		    data: RDD[LabeledPoint]) {
 			if(isBinary) training(data)
 			else OVATraining(training, data)
 		}
 		
 		@Experimental
-		private def OVATraining (training: (RDD[LabeledPoint]) => ClassificationModel, 
-		    data: RDD[LabeledPoint]): Array[(Double, Option[ClassificationModel])] = {
+		private def OVATraining (training: (RDD[LabeledPoint]) => ClassificationModelAdapter, 
+		    data: RDD[LabeledPoint]): Array[(Double, Option[ClassificationModelAdapter])] = {
 			// Histogram of labels
 			val classHist = data.map(point => (point.label, 1L)).reduceByKey(_ + _).collect.sortBy(_._2)
 				
@@ -93,7 +93,7 @@ object MLExperimentUtils {
 			}
 			
 			// We train models for each class except for the majority one
-			val ovaModels: Array[(Double, Option[ClassificationModel])] = 
+			val ovaModels: Array[(Double, Option[ClassificationModelAdapter])] = 
 			  classHist.dropRight(1).map{ case (label, count) => {
 					val binaryTr = data.map (toBinary(_, label))
 					val oneModel = training(binaryTr)
@@ -102,18 +102,18 @@ object MLExperimentUtils {
 			}
 			
 			// return the class labels and the binary classifier derived from each one
-			val lastElem = Array((classHist.last._1, None: Option[ClassificationModel]))
+			val lastElem = Array((classHist.last._1, None: Option[ClassificationModelAdapter]))
 			ovaModels ++ lastElem		
 		}
 		
 		@Experimental
-		private def computeOVAPredictions (ovaModels: Array[(Double, Option[ClassificationModel])], 
+		private def computeOVAPredictions (ovaModels: Array[(Double, Option[ClassificationModelAdapter])], 
 		    test: RDD[LabeledPoint], threshold: Double = 1.0): RDD[(Double, Double)] = {
 		  
 			def recursiveOVA (point: LabeledPoint, index: Int): Double = {
 			  val (label, model) = ovaModels(index)
 			  model match {
-			  	case Some(m: ClassificationModel) =>
+			  	case Some(m: ClassificationModelAdapter) =>
 			  	  	val prediction = if(m.predict(point.features) >= threshold) positive else negative
 			  	  	if (prediction == negative) recursiveOVA(point, index + 1) else label
 			  	case None => ovaModels.last._1
@@ -255,7 +255,7 @@ object MLExperimentUtils {
 		}
 		
 		private def classification(
-				classify: (RDD[LabeledPoint]) => ClassificationModel, 
+				classify: (RDD[LabeledPoint]) => ClassificationModelAdapter, 
 				train: RDD[LabeledPoint], 
 				test: RDD[LabeledPoint], 
 				outputDir: String,
@@ -319,7 +319,7 @@ object MLExperimentUtils {
 		    sc: SparkContext,
 		    discretize: (Option[(RDD[LabeledPoint]) => DiscretizerModel], Boolean), 
 		    featureSelect: (Option[(RDD[LabeledPoint]) => SelectorModel], Boolean), 
-		    classify: Option[(RDD[LabeledPoint]) => ClassificationModel],
+		    classify: Option[(RDD[LabeledPoint]) => ClassificationModelAdapter],
 		    inputData: (Any, String, Boolean), 
 		    outputDir: String, 
 		    algoInfo: String) {

@@ -7,6 +7,7 @@ import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.mllib.evaluation.BinaryClassificationMetrics
 import org.ugr.sci2s.mllib.test.{MLExperimentUtils => MLEU}
 import org.apache.spark.mllib.classification.ClassificationModel
+import org.apache.spark.mllib.linalg._
 
 object SVMadapter extends ClassifierAdapter {
   
@@ -43,14 +44,27 @@ object SVMadapter extends ClassifierAdapter {
 		model.setThreshold(maxThreshold._1)			  
 	}
   
-	def classify (train: RDD[LabeledPoint], parameters: Map[String, String]): ClassificationModel = {
+	def classify (train: RDD[LabeledPoint], parameters: Map[String, String]): ClassificationModelAdapter = {
   	val numIter = MLEU.toInt(parameters.getOrElse("cls-numIter", "100"), 100)
 		val stepSize = MLEU.toDouble(parameters.getOrElse("cls-stepSize", "1.0"), 1.0)
 		val regParam = MLEU.toDouble(parameters.getOrElse("cls-regParam", "1.0"), 1.0)
 		val miniBatchFraction = MLEU.toDouble(parameters.getOrElse("cls-miniBatchFraction", "1.0"), 1.0)
 		val model = SVMWithSGD.train(train, numIter, stepSize, regParam, miniBatchFraction)
 		calcThreshold(model, train)
-		model
+		new SVMadapter(model)
 	}
 
 }
+
+class SVMadapter(model: ClassificationModel) extends ClassificationModelAdapter {
+  
+  override def predict(data: RDD[Vector]): RDD[Double] = {
+    model.predict(data)
+  }
+      
+  override def predict(data: Vector): Double = {
+    model.predict(data)
+  }
+}
+
+

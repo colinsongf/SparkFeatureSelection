@@ -7,6 +7,7 @@ import org.ugr.sci2s.mllib.test.{MLExperimentUtils => MLEU}
 import org.apache.spark.mllib.classification.ClassificationModel
 import org.apache.spark.mllib.classification.LogisticRegressionWithSGD
 import org.apache.spark.mllib.classification.LogisticRegressionModel
+import org.apache.spark.mllib.linalg._
 
 object LRadapter extends ClassifierAdapter {
   
@@ -41,12 +42,23 @@ object LRadapter extends ClassifierAdapter {
     model.setThreshold(maxThreshold._1)       
   }
   
-  def classify (train: RDD[LabeledPoint], parameters: Map[String, String]): ClassificationModel = {
+  def classify (train: RDD[LabeledPoint], parameters: Map[String, String]): ClassificationModelAdapter = {
     val numIter = MLEU.toInt(parameters.getOrElse("cls-numIter", "100"), 100)
     val stepSize = MLEU.toDouble(parameters.getOrElse("cls-stepSize", "1.0"), 1.0)
     val miniBatchFraction = MLEU.toDouble(parameters.getOrElse("cls-miniBatchFraction", "1.0"), 1.0)
     val model = LogisticRegressionWithSGD.train(train, numIter, stepSize, miniBatchFraction)
     calcThreshold(model, train)
-    model
+    new LRadapter(model)
+  }
+}
+
+class LRadapter(model: ClassificationModel) extends ClassificationModelAdapter {
+  
+  override def predict(data: RDD[Vector]): RDD[Double] = {
+    model.predict(data)
+  }
+      
+  override def predict(data: Vector): Double = {
+    model.predict(data)
   }
 }

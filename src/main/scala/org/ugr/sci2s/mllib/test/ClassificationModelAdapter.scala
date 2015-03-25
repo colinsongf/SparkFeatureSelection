@@ -6,12 +6,10 @@ import org.apache.spark.rdd.RDD
 import org.apache.spark.mllib.classification.SVMModel
 import org.apache.spark.mllib.linalg._
 
-trait ClassifierAdapter extends Serializable {
-  
-	def classify (
-	    train: RDD[LabeledPoint], 
-	    parameters: Map[String, String]): ClassificationModelAdapter  
-	    
-	def algorithmInfo (parameters: Map[String, String]): String
+trait ClassificationModelAdapter extends Serializable {
+      
+  def predict(data: RDD[Vector]): RDD[Double]
+      
+  def predict(data: Vector): Double
 
 }
