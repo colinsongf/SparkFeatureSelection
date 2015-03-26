@@ -11,7 +11,7 @@ import org.apache.spark.mllib.linalg._
 
 object TreeAdapter extends ClassifierAdapter {
   
-	def algorithmInfo (parameters: Map[String, String]): String = {
+	override def algorithmInfo (parameters: Map[String, String]): String = {
       val numClasses = parameters.getOrElse("cls-numClasses", "2")
       val impurity = parameters.getOrElse("cls-impurity", "gini")
       val maxDepth = parameters.getOrElse("cls-maxDepth", "5")
@@ -24,14 +24,24 @@ object TreeAdapter extends ClassifierAdapter {
 			s"maxDepth: $maxDepth\n\n"		
 	}
   
-	def classify (train: RDD[LabeledPoint], parameters: Map[String, String]): ClassificationModelAdapter = {
+  override def classify (train: RDD[LabeledPoint], parameters: Map[String, String]): ClassificationModelAdapter = {
+    val numClasses = MLEU.toInt(parameters.getOrElse("cls-numClasses", "2"), 2)
+    val impurity = parameters.getOrElse("cls-impurity", "gini")
+    val maxDepth = MLEU.toInt(parameters.getOrElse("cls-maxDepth", "5"), 5)
+    val maxBins = MLEU.toInt(parameters.getOrElse("cls-maxBins", "32"), 32)
+    val categoricalFeaturesInfo = Map[Int, Int]()
+    val model = DecisionTree.trainClassifier(train, 
+        numClasses, categoricalFeaturesInfo, impurity, maxDepth, maxBins)
+    new TreeAdapter(model)
+  }
+  
+	def classify (train: RDD[LabeledPoint], parameters: Map[String, String], nominalInfo: Map[Int, Int]): ClassificationModelAdapter = {
   	val numClasses = MLEU.toInt(parameters.getOrElse("cls-numClasses", "2"), 2)
 		val impurity = parameters.getOrElse("cls-impurity", "gini")
 		val maxDepth = MLEU.toInt(parameters.getOrElse("cls-maxDepth", "5"), 5)
 		val maxBins = MLEU.toInt(parameters.getOrElse("cls-maxBins", "32"), 32)
-    val categoricalFeaturesInfo = Map[Int, Int]()
 		val model = DecisionTree.trainClassifier(train, 
-        numClasses, categoricalFeaturesInfo, impurity, maxDepth, maxBins)
+        numClasses, nominalInfo, impurity, maxDepth, maxBins)
 		new TreeAdapter(model)
 	}
 

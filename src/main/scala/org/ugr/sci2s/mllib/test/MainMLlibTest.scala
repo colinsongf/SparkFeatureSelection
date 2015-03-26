@@ -34,7 +34,7 @@ object MainMLlibTest {
 		println("Usage: MLlibTest --header-file=\"hdfs://\" (--train-file=\"hdfs://\" --test-file=\"hdfs://\" " 
 		    + "| --data-dir=\"hdfs://\") --output-dir=\"hdfs:\\ --disc=yes [ --disc-nbins=10 --save-disc=yes ] --fs=yes [ --fs-criterion=mrmr "
 		    + "--fs-nfeat=100 --fs-npool=30 --save-fs=yes ] --file-format=LibSVM|KEEL --data-format=sparse|dense "
-        + "--classifier=no|SVM|NB|LR [ --cls-lambda=1.0 --cls-numIter=1 --cls-stepSize = 1.0"
+        + "--classifier=no|SVM|NB|LR|DT [ --cls-lambda=1.0 --cls-numIter=1 --cls-stepSize = 1.0"
 		    + "--cls-regParam=1.0 --cls-miniBatchFraction=1.0 ]")
         
 		// Create a table of parameters (parsing)
@@ -107,20 +107,9 @@ object MainMLlibTest {
 	          case _ => (Some(fs), false)
 	        }
 			case _ => (None, false)
-		}   
-		
-		// Classification
-		val (algoInfo, classification) = params.get("classifier") match {
-		  	case Some(s) if s matches "(?i)no" => ("", None)
-		  	case Some(s) if s matches "(?i)NB" => (NBadapter.algorithmInfo(params), 
-		  			Some(NBadapter.classify(_: RDD[LabeledPoint], params)))
-		    case Some(s) if s matches "(?i)LR" => (LRadapter.algorithmInfo(params), 
-		    		Some(LRadapter.classify(_: RDD[LabeledPoint], params)))        
-		    case _ => (SVMadapter.algorithmInfo(params), // Default: SVM
-		    		Some(SVMadapter.classify(_: RDD[LabeledPoint], params)))			    		
 		}
 	
-		println("*** Classification info:" + algoInfo)
+		
 	    
 	    val format = params.get("file-format") match {
 	        case Some(s) if s matches "(?i)LibSVM" => s
@@ -146,6 +135,24 @@ object MainMLlibTest {
 						  System.exit(-1)
 				  }
 			}
+      
+          // Classification
+      val (algoInfo, classification) = params.get("classifier") match {
+        case Some(s) if s matches "(?i)no" => ("", None)
+        case Some(s) if s matches "(?i)DT" => 
+          val c = KeelParser.parseHeaderFile(sc, header.get)
+          val arity = for(i <- 0 until c.size if !c(i).isDefinedAt("min")) yield (i, c(i).size)          
+          (TreeAdapter.algorithmInfo(params), 
+            Some(TreeAdapter.classify(_: RDD[LabeledPoint], params, arity.toMap))) 
+        case Some(s) if s matches "(?i)NB" => (NBadapter.algorithmInfo(params), 
+            Some(NBadapter.classify(_: RDD[LabeledPoint], params)))
+        case Some(s) if s matches "(?i)LR" => (LRadapter.algorithmInfo(params), 
+            Some(LRadapter.classify(_: RDD[LabeledPoint], params)))        
+        case _ => (SVMadapter.algorithmInfo(params), // Default: SVM
+            Some(SVMadapter.classify(_: RDD[LabeledPoint], params)))              
+    }
+      
+      println("*** Classification info:" + algoInfo)
     
 		
 		// Perform the experiment
