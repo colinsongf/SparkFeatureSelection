@@ -171,7 +171,7 @@ object InfoTheory {
         var dpairs = Seq.empty[((Any, Byte, Byte, Option[Byte]), Long)]
         for(xi <- 0 until acc.size if acc(xi) != 0) {
           val indexes = if(multY) (xi, yi) else xi
-          dpairs = ((indexes, 0: Byte, ya, za), acc(xi)) +: dpairs
+          dpairs = ((indexes, 0: Byte, ya, za), acc(xi).toLong) +: dpairs
         }
         dpairs
       }
