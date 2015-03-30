@@ -18,10 +18,10 @@
 package org.apache.spark.mllib.feature
 
 import breeze.linalg.{DenseVector => BDV, SparseVector => BSV, Vector => BV}
-
 import org.apache.spark.rdd.RDD
-import org.apache.spark.SparkContext._ 
+import org.apache.spark.SparkContext._
 import org.apache.spark.broadcast.Broadcast
+import org.apache.zookeeper.KeeperException.UnimplementedException
 
 /**
  * Information Theory function and distributed primitives.
@@ -104,6 +104,78 @@ object InfoTheory {
      }     
      pairs
   } 
+  
+  /* Pair generator for dense data */
+  private def SparseGenerator(
+      v: BV[Byte], 
+      varX: Broadcast[Seq[Int]],
+      varY: Broadcast[Seq[Int]],
+      varZ: Broadcast[Option[Int]]) = {
+    
+     val dv = v.asInstanceOf[BDV[Byte]]
+     val zval = varZ.value match {case Some(z) => Some(v(z)) case None => None}     
+     var dpairs = Seq.empty[((Any, Byte, Byte, Option[Byte]), Long)]
+     val multY = varY.value.length > 1
+     
+     val xv = dv(varX.value)
+     val yv = dv(varY.value)
+     for((xi, xa) <- xv.iterator){
+       for((yi, ya) <- yv.iterator) {
+         val indexes = if(multY) (xi, yi) else xi
+         dpairs = ((indexes, xa, ya, zval), 1L) +: dpairs
+       }
+     }     
+     dpairs
+  }
+  
+  private def computeZeros(
+      data: RDD[BV[Byte]],
+      bvarX: Broadcast[Seq[Int]],
+      bvarY: Broadcast[Seq[Int]],
+      bvarZ: Broadcast[Option[Int]]) = {
+    val accZeros = data.asInstanceOf[RDD[BSV[Byte]]].mapPartitions({ it => 
+        var part = Map.empty[(Int, Byte, Option[Byte]), Array[Int]]
+        if(it.hasNext) {  
+          for (sv <- it) {
+            val zval = bvarZ.value match {case Some(z) => Some(sv(z)) case None => None}
+            val yelem = (for(ydx <- bvarY.value) yield (ydx, sv.index.indexOf(ydx)))
+              .map{case (k, sidx) => if (sidx == -1) (k, 0: Byte) else (k, sv(sidx))}
+            var i = 0; 
+            var j = 0;             
+             
+            while (i < bvarX.value.size && j < sv.index.length) {
+              val idx= bvarX.value(i)
+              val jdx = sv.index(j)
+              if (idx == jdx) {
+                j += 1
+                i += 1
+              } else {
+                if (idx > jdx) {
+                  j += 1
+                } else {                    
+                  for((yi, yval) <- yelem) {
+                    val v = part.getOrElse((yi, yval, zval), new Array[Int](bvarX.value.size))
+                    v(i) = v(i) + 1   
+                  }
+                  i += 1
+                }
+              }
+            }
+          }
+        }
+        part.toIterator          
+      }).reduceByKey((_ , _).zipped.map(_ + _))
+      
+      val multY = bvarY.value.length > 1     
+      accZeros.flatMap{ case ((yi, ya, za), acc) =>
+        var dpairs = Seq.empty[((Any, Byte, Byte, Option[Byte]), Long)]
+        for(xi <- 0 until acc.size if acc(xi) != 0) {
+          val indexes = if(multY) (xi, yi) else xi
+          dpairs = ((indexes, 0: Byte, ya, za), acc(xi)) +: dpairs
+        }
+        dpairs
+      }
+  }
     
   
   /**
@@ -136,15 +208,18 @@ object InfoTheory {
     val bvarY = sc.broadcast(varY)
     val bvarZ = sc.broadcast(varZ)
     
-    // Common function to generate pairs, it choose between sparse and dense processing 
-    data.first match {
-      case v: BDV[Byte] =>
+    // Common function to generate pairs, it chooses between sparse and dense processing 
+    val pairs = data.first match {
+      case _: BDV[Byte] =>
         val generator = DenseGenerator(_: BV[Byte], bvarX, bvarY, bvarZ)
-        calculateMIDenseData(data, generator, varY(0), n)
-      case v: BSV[Byte] =>     
-        // Not implemented yet!
-        throw new NotImplementedError()
-    }
+        data.flatMap(generator)
+      case _: BSV[Byte] =>             
+        val generator = SparseGenerator(_: BV[Byte], bvarX, bvarY, bvarZ)
+        val densePairs = data.flatMap(generator)
+        val zeroPairs = computeZeros(data, bvarX, bvarY, bvarZ)
+        densePairs.union(zeroPairs)
+    }    
+    computeMI(pairs, varY(0), n)
   }
   
   /**
@@ -157,13 +232,12 @@ object InfoTheory {
    * @return     RDD of (primary var, (MI, CMI))
    * 
    */
-  private def calculateMIDenseData(
-      data: RDD[BV[Byte]],
-      pairsGenerator: BV[Byte] => Seq[((Any, Byte, Any, Option[Byte]), Long)],
+  private[mllib] def computeMI(
+      pairs: RDD[((Any, Byte, Byte, Option[Byte]), Long)],
       firstY: Int,
       n: Long) = {
 
-    val combinations = data.flatMap(pairsGenerator).reduceByKey(_ + _)
+    val combinations = pairs.reduceByKey(_ + _)
     // Split each combination keeping instance keys
       .flatMap {
       case ((k, x, y, Some(z)), q) =>          
