@@ -18,10 +18,11 @@
 package org.apache.spark.mllib.feature
 
 import breeze.linalg.{DenseVector => BDV, SparseVector => BSV, Vector => BV}
-import org.apache.spark.rdd.RDD
+
+
 import org.apache.spark.SparkContext._
+import org.apache.spark.rdd._
 import org.apache.spark.broadcast.Broadcast
-import org.apache.zookeeper.KeeperException.UnimplementedException
 
 /**
  * Information Theory function and distributed primitives.
@@ -86,13 +87,12 @@ object InfoTheory {
   
   /* Pair generator for dense data */
   private def DenseGenerator(
-      v: BV[Byte], 
+      dv: BDV[Byte], 
       varX: Broadcast[Seq[Int]],
       varY: Broadcast[Seq[Int]],
       varZ: Broadcast[Option[Int]]) = {
     
-     val dv = v.asInstanceOf[BDV[Byte]]
-     val zval = varZ.value match {case Some(z) => Some(v(z)) case None => None}     
+     val zval = varZ.value match {case Some(z) => Some(dv(z)) case None => None}     
      var pairs = Seq.empty[((Any, Byte, Byte, Option[Byte]), Long)]
      val multY = varY.value.length > 1
      
@@ -107,13 +107,12 @@ object InfoTheory {
   
   /* Pair generator for dense data */
   private def SparseGenerator(
-      v: BV[Byte], 
+      dv: BSV[Byte], 
       varX: Broadcast[Seq[Int]],
       varY: Broadcast[Seq[Int]],
       varZ: Broadcast[Option[Int]]) = {
     
-     val dv = v.asInstanceOf[BDV[Byte]]
-     val zval = varZ.value match {case Some(z) => Some(v(z)) case None => None}     
+     val zval = varZ.value match {case Some(z) => Some(dv(z)) case None => None}     
      var dpairs = Seq.empty[((Any, Byte, Byte, Option[Byte]), Long)]
      val multY = varY.value.length > 1
      
@@ -128,53 +127,45 @@ object InfoTheory {
      dpairs
   }
   
-  private def computeZeros(
-      data: RDD[BV[Byte]],
+  private def zerosGenerator(
+      data: RDD[BSV[Byte]],
       bvarX: Broadcast[Seq[Int]],
       bvarY: Broadcast[Seq[Int]],
       bvarZ: Broadcast[Option[Int]]) = {
-    val accZeros = data.asInstanceOf[RDD[BSV[Byte]]].mapPartitions({ it => 
-        var part = Map.empty[(Int, Byte, Option[Byte]), Array[Int]]
-        if(it.hasNext) {  
-          for (sv <- it) {
-            val zval = bvarZ.value match {case Some(z) => Some(sv(z)) case None => None}
-            val yelem = (for(ydx <- bvarY.value) yield (ydx, sv.index.indexOf(ydx)))
-              .map{case (k, sidx) => if (sidx == -1) (k, 0: Byte) else (k, sv(sidx))}
-            var i = 0; 
-            var j = 0;             
-             
-            while (i < bvarX.value.size && j < sv.index.length) {
-              val idx= bvarX.value(i)
-              val jdx = sv.index(j)
-              if (idx == jdx) {
-                j += 1
-                i += 1
-              } else {
-                if (idx > jdx) {
-                  j += 1
-                } else {                    
-                  for((yi, yval) <- yelem) {
-                    val v = part.getOrElse((yi, yval, zval), new Array[Int](bvarX.value.size))
-                    v(i) = v(i) + 1   
-                  }
-                  i += 1
-                }
-              }
-            }
-          }
-        }
-        part.toIterator          
-      }).reduceByKey((_ , _).zipped.map(_ + _))
-      
-      val multY = bvarY.value.length > 1     
-      accZeros.flatMap{ case ((yi, ya, za), acc) =>
-        var dpairs = Seq.empty[((Any, Byte, Byte, Option[Byte]), Long)]
-        for(xi <- 0 until acc.size if acc(xi) != 0) {
-          val indexes = if(multY) (xi, yi) else xi
-          dpairs = ((indexes, 0: Byte, ya, za), acc(xi).toLong) +: dpairs
-        }
-        dpairs
-      }
+    
+    val accZeros = data.mapPartitions({ it => 
+	    var part = Map.empty[(Int, Byte, Option[Byte]), Array[Int]]
+	    if(it.hasNext) {  
+	      for (sv <- it) {
+	        val zval = bvarZ.value match {case Some(z) => Some(sv(z)) case None => None}
+	        val yelem = sv(bvarY.value).pairs.iterator
+	        //val yelem = (for(ydx <- bvarY.value) yield (ydx, sv.index.indexOf(ydx)))
+	        //  .map{case (k, sidx) => if (sidx == -1) (k, 0: Byte) else (k, sv(sidx))}
+	        for (i <- bvarX.value if sv(i) == 0.0) {
+	          for((yi, yval) <- yelem) {
+	            // sum up one unit to the global vector
+	            val v = part.getOrElse((yi, yval, zval), new Array[Int](bvarX.value.size))
+	            v(i) = v(i) + 1
+	            part += ((yi, yval, zval) -> v)
+	          }
+	        }
+	      }
+	    }
+	    part.toIterator          
+	  }).reduceByKey((_ , _).zipped.map(_ + _))
+	 
+	  println("First acc: " + accZeros.first)
+	  
+	  val multY = bvarY.value.length > 1     
+	  accZeros.flatMap{ case ((yi, ya, za), acc) =>
+	    var dpairs = Seq.empty[((Any, Byte, Byte, Option[Byte]), Long)]
+	    for(i <- 0 until bvarX.value.size if acc(i) != 0) {
+	      val xi = bvarX.value(i)
+	      val idx = if(multY) (xi, yi) else xi
+	      dpairs = ((idx, 0: Byte, ya, za), acc(i).toLong) +: dpairs
+	    }
+	    dpairs
+	  }
   }
     
   
@@ -211,12 +202,15 @@ object InfoTheory {
     // Common function to generate pairs, it chooses between sparse and dense processing 
     val pairs = data.first match {
       case _: BDV[Byte] =>
-        val generator = DenseGenerator(_: BV[Byte], bvarX, bvarY, bvarZ)
-        data.flatMap(generator)
-      case _: BSV[Byte] =>             
-        val generator = SparseGenerator(_: BV[Byte], bvarX, bvarY, bvarZ)
-        val densePairs = data.flatMap(generator)
-        val zeroPairs = computeZeros(data, bvarX, bvarY, bvarZ)
+        val denseData = data.map(_.asInstanceOf[BDV[Byte]])
+        val generator = DenseGenerator(_: BDV[Byte], bvarX, bvarY, bvarZ)
+        denseData.flatMap(generator)
+      case _: BSV[Byte] =>     
+        val sparseData = data.map(_.asInstanceOf[BSV[Byte]])
+        val generator = SparseGenerator(_: BSV[Byte], bvarX, bvarY, bvarZ)
+        val densePairs = sparseData.flatMap(generator)
+        val zeroPairs = zerosGenerator(sparseData, bvarX, bvarY, bvarZ)
+        println(zeroPairs.first)
         densePairs.union(zeroPairs)
     }    
     computeMI(pairs, varY(0), n)

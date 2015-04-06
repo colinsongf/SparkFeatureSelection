@@ -54,7 +54,7 @@ class InfoThSelector private[feature] (
   val byteData: RDD[BV[Byte]] = data.map {
     case LabeledPoint(label, values: SparseVector) => 
       new BSV[Byte](0 +: values.indices.map(_ + 1), 
-        label.toByte +: values.values.toArray.map(_.toByte), values.indices.size + 1)
+        label.toByte +: values.values.toArray.map(_.toByte), values.size + 1)
     case LabeledPoint(label, values: DenseVector) => 
       new BDV[Byte](label.toByte +: values.toArray.map(_.toByte))
   }
@@ -203,16 +203,14 @@ class InfoThSelector private[feature] (
   private[feature] def run(nToSelect: Int, poolSize: Int = 30) = {
     
     require(nToSelect < nFeatures)
-    byteData.persist(StorageLevel.MEMORY_AND_DISK_SER)
+    val bdata = byteData.persist(StorageLevel.MEMORY_AND_DISK_SER)
     
     val selected = criterionFactory.getCriterion match {
       case _: InfoThCriterion with Bound if poolSize != 0 =>
-        selectFeaturesWithPool(byteData, nToSelect, poolSize)
+        selectFeaturesWithPool(bdata, nToSelect, poolSize)
       case _: InfoThCriterion =>
-        selectFeaturesWithoutPool(byteData, nToSelect)
+        selectFeaturesWithoutPool(bdata, nToSelect)
     }
-    
-    byteData.unpersist()
     
     // Print best features according to the mRMR measure
     val out = selected.map{case F(feat, rel) => feat + "\t" + "%.4f".format(rel)}.mkString("\n")
