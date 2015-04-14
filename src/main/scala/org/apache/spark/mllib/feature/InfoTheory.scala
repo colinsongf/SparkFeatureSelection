@@ -52,38 +52,6 @@ object InfoTheory {
   private[feature] def entropy(freqs: Seq[Long]): Double = {
     entropy(freqs, freqs.reduce(_ + _))
   }
-
-  private val createCombiner: ((Byte, Long)) => (Long, Long, Long, Long, Long, Long, Long) = {
-    case (1, q) => (q, 0, 0, 0, 0, 0, 0)
-    case (2, q) => (0, q, 0, 0, 0, 0, 0)
-    case (3, q) => (0, 0, q, 0, 0, 0, 0)
-    case (4, q) => (0, 0, 0, q, 0, 0, 0)
-    case (5, q) => (0, 0, 0, 0, q, 0, 0)
-    case (6, q) => (0, 0, 0, 0, 0, q, 0)
-    case (7, q) => (0, 0, 0, 0, 0, 0, q)
-  }
-
-  private val mergeValues: ((Long, Long, Long, Long, Long, Long, Long), (Byte, Long)) => 
-      (Long, Long, Long, Long, Long, Long, Long) = {
-    case ((qxz, qyz, qxyz, qz, qxy, qx, qy), (ref, q)) =>
-      ref match {
-        case 1 => (qxz + q, qyz, qxyz, qz, qxy, qx, qy)
-        case 2 => (qxz, qyz + q, qxyz, qz, qxy, qx, qy)
-        case 3 => (qxz, qyz, qxyz + q, qz, qxy, qx, qy)
-        case 4 => (qxz, qyz, qxyz, qz + q, qxy, qx, qy)
-        case 5 => (qxz, qyz, qxyz, qz, qxy + q, qx, qy)
-        case 6 => (qxz, qyz, qxyz, qz, qxy, qx + q, qy)
-        case 7 => (qxz, qyz, qxyz, qz, qxy, qx, qy + q)
-      }
-  }
-
-  private val mergeCombiners: (
-      (Long, Long, Long, Long, Long, Long, Long), 
-      (Long, Long, Long, Long, Long, Long, Long)) => 
-      (Long, Long, Long, Long, Long, Long, Long) = {
-    case ((qxz1, qyz1, qxyz1, qz1, qxy1, qx1, qy1), (qxz2, qyz2, qxyz2, qz2, qxy2, qx2, qy2)) =>
-      (qxz1 + qxz2, qyz1 + qyz2, qxyz1 + qxyz2, qz1 + qz2, qxy1 + qxy2, qx1 + qx2, qy1 + qy2)
-  }
   
   /* Pair generator for dense data */
   private def DenseGenerator(
@@ -116,10 +84,10 @@ object InfoTheory {
      var dpairs = Seq.empty[((Any, Byte, Byte, Option[Byte]), Long)]
      val multY = varY.value.length > 1
      
-     val xv = dv(varX.value)
-     val yv = dv(varY.value)
-     for((xi, xa) <- xv.iterator){
-       for((yi, ya) <- yv.iterator) {
+     for(xi <- varX.value; if dv(xi) != 0){
+       val xa = dv(xi)
+       for(yi <- varY.value; if dv(yi) != 0) {
+         val ya = dv(yi)
          val indexes = if(multY) (xi, yi) else xi
          dpairs = ((indexes, xa, ya, zval), 1L) +: dpairs
        }
@@ -138,12 +106,10 @@ object InfoTheory {
 	    if(it.hasNext) {  
 	      for (sv <- it) {
 	        val zval = bvarZ.value match {case Some(z) => Some(sv(z)) case None => None}
-	        val yelem = sv(bvarY.value).pairs.iterator
-	        //val yelem = (for(ydx <- bvarY.value) yield (ydx, sv.index.indexOf(ydx)))
-	        //  .map{case (k, sidx) => if (sidx == -1) (k, 0: Byte) else (k, sv(sidx))}
-	        for (i <- bvarX.value if sv(i) == 0.0) {
-	          for((yi, yval) <- yelem) {
-	            // sum up one unit to the global vector
+	        val yelems = sv(bvarY.value).pairs.iterator.toArray // it is repeatedly accessed
+	        for (i <- 0 until bvarX.value.size if sv(bvarX.value(i)) == 0) {
+	          for((yi, yval) <- yelems) {
+	            // sum up 1 to the global vector
 	            val v = part.getOrElse((yi, yval, zval), new Array[Int](bvarX.value.size))
 	            v(i) = v(i) + 1
 	            part += ((yi, yval, zval) -> v)
@@ -153,15 +119,12 @@ object InfoTheory {
 	    }
 	    part.toIterator          
 	  }).reduceByKey((_ , _).zipped.map(_ + _))
-	 
-	  println("First acc: " + accZeros.first)
-	  
-	  val multY = bvarY.value.length > 1     
+     
 	  accZeros.flatMap{ case ((yi, ya, za), acc) =>
 	    var dpairs = Seq.empty[((Any, Byte, Byte, Option[Byte]), Long)]
-	    for(i <- 0 until bvarX.value.size if acc(i) != 0) {
+	    for(i <- 0 until bvarX.value.size if acc(i) != 0) {        
 	      val xi = bvarX.value(i)
-	      val idx = if(multY) (xi, yi) else xi
+	      val idx = if(bvarY.value.length > 1) (xi, yi) else xi
 	      dpairs = ((idx, 0: Byte, ya, za), acc(i).toLong) +: dpairs
 	    }
 	    dpairs
@@ -208,11 +171,14 @@ object InfoTheory {
       case _: BSV[Byte] =>     
         val sparseData = data.map(_.asInstanceOf[BSV[Byte]])
         val generator = SparseGenerator(_: BSV[Byte], bvarX, bvarY, bvarZ)
-        val densePairs = sparseData.flatMap(generator)
-        val zeroPairs = zerosGenerator(sparseData, bvarX, bvarY, bvarZ)
-        println(zeroPairs.first)
+        val densePairs = sparseData.flatMap(generator).cache()
+        println("densePairs size: " + densePairs.count())
+        val zeroPairs = zerosGenerator(sparseData, bvarX, bvarY, bvarZ).cache()
+        println("zeroPairs size: " + zeroPairs.count())
         densePairs.union(zeroPairs)
-    }    
+        
+    }
+    println("pairs size: " + pairs.cache().count())
     computeMI(pairs, varY(0), n)
   }
   
@@ -230,8 +196,8 @@ object InfoTheory {
       pairs: RDD[((Any, Byte, Byte, Option[Byte]), Long)],
       firstY: Int,
       n: Long) = {
-
-    val combinations = pairs.reduceByKey(_ + _)
+    
+  val combinations = pairs.reduceByKey(_ + _)
     // Split each combination keeping instance keys
       .flatMap {
       case ((k, x, y, Some(z)), q) =>          
@@ -247,7 +213,39 @@ object InfoTheory {
             ((k, 6:Byte /* "x" */  , x),         (Set(y), q)),
             ((k, 7:Byte /* "y" */  , y),         (Set(x), q)))
     }
+    
+    val createCombiner: ((Byte, Long)) => (Long, Long, Long, Long, Long, Long, Long) = {
+      case (1, q) => (q, 0, 0, 0, 0, 0, 0)
+      case (2, q) => (0, q, 0, 0, 0, 0, 0)
+      case (3, q) => (0, 0, q, 0, 0, 0, 0)
+      case (4, q) => (0, 0, 0, q, 0, 0, 0)
+      case (5, q) => (0, 0, 0, 0, q, 0, 0)
+      case (6, q) => (0, 0, 0, 0, 0, q, 0)
+      case (7, q) => (0, 0, 0, 0, 0, 0, q)
+    }
 
+    val mergeValues: ((Long, Long, Long, Long, Long, Long, Long), (Byte, Long)) => 
+        (Long, Long, Long, Long, Long, Long, Long) = {
+      case ((qxz, qyz, qxyz, qz, qxy, qx, qy), (ref, q)) =>
+        ref match {
+          case 1 => (qxz + q, qyz, qxyz, qz, qxy, qx, qy)
+          case 2 => (qxz, qyz + q, qxyz, qz, qxy, qx, qy)
+          case 3 => (qxz, qyz, qxyz + q, qz, qxy, qx, qy)
+          case 4 => (qxz, qyz, qxyz, qz + q, qxy, qx, qy)
+          case 5 => (qxz, qyz, qxyz, qz, qxy + q, qx, qy)
+          case 6 => (qxz, qyz, qxyz, qz, qxy, qx + q, qy)
+          case 7 => (qxz, qyz, qxyz, qz, qxy, qx, qy + q)
+        }
+    }
+
+    val mergeCombiners: (
+        (Long, Long, Long, Long, Long, Long, Long), 
+        (Long, Long, Long, Long, Long, Long, Long)) => 
+        (Long, Long, Long, Long, Long, Long, Long) = {
+      case ((qxz1, qyz1, qxyz1, qz1, qxy1, qx1, qy1), (qxz2, qyz2, qxyz2, qz2, qxy2, qx2, qy2)) =>
+        (qxz1 + qxz2, qyz1 + qyz2, qxyz1 + qxyz2, qz1 + qz2, qxy1 + qxy2, qx1 + qx2, qy1 + qy2)
+    }
+  
     // Count frequencies for each combination
     val grouped_frequencies = combinations.reduceByKey({
       case ((keys1, q1), (keys2, q2)) => (keys1 ++ keys2, q1 + q2)
