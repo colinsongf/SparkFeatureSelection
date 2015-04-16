@@ -381,6 +381,7 @@ object MLExperimentUtils {
 				
 				// Discretization
 				var trData = trainData; var tstData = testData
+        trData.cache() // Data are called repeatedly in MDLP discretizer
 				var taskTime = 0.0
 				discretize match { 
 				  case (Some(disc), b) => 
@@ -392,6 +393,7 @@ object MLExperimentUtils {
 				  case _ => /* criteria not fulfilled, do not discretize */
 				}				
 				times("DiscTime") = times("DiscTime") :+ taskTime
+        trData.unpersist()
 
 				// Feature Selection
 				featureSelect match { 
