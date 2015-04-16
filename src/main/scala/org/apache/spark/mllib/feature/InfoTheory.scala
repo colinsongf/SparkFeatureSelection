@@ -167,18 +167,14 @@ object InfoTheory {
       case _: BDV[Byte] =>
         val denseData = data.map(_.asInstanceOf[BDV[Byte]])
         val generator = DenseGenerator(_: BDV[Byte], bvarX, bvarY, bvarZ)
-        denseData.flatMap(generator)
+        denseData.flatMap(generator).reduceByKey(_ + _)
       case _: BSV[Byte] =>     
         val sparseData = data.map(_.asInstanceOf[BSV[Byte]])
         val generator = SparseGenerator(_: BSV[Byte], bvarX, bvarY, bvarZ)
-        val densePairs = sparseData.flatMap(generator).cache()
-        println("densePairs size: " + densePairs.count())
-        val zeroPairs = zerosGenerator(sparseData, bvarX, bvarY, bvarZ).cache()
-        println("zeroPairs size: " + zeroPairs.count())
-        densePairs.union(zeroPairs)
-        
+        val densePairs = sparseData.flatMap(generator).reduceByKey(_ + _)
+        val zeroPairs = zerosGenerator(sparseData, bvarX, bvarY, bvarZ)
+        densePairs.union(zeroPairs)        
     }
-    println("pairs size: " + pairs.cache().count())
     computeMI(pairs, varY(0), n)
   }
   
@@ -197,7 +193,7 @@ object InfoTheory {
       firstY: Int,
       n: Long) = {
     
-  val combinations = pairs.reduceByKey(_ + _)
+  val combinations = pairs
     // Split each combination keeping instance keys
       .flatMap {
       case ((k, x, y, Some(z)), q) =>          

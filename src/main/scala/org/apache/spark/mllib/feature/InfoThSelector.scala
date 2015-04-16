@@ -66,7 +66,7 @@ class InfoThSelector private[feature] (
    * @return A list with the most relevant features and its scores.
    * 
    */
-  private[feature] def selectFeaturesWithoutPool(
+  private[feature] def selectFeaturesWithoutPool2(
       data: RDD[BV[Byte]],
       nToSelect: Int) = {            
     val nElements = data.count()
@@ -131,7 +131,7 @@ class InfoThSelector private[feature] (
    * @return A list with the most relevant features and its scores.
    * 
    */
-  private[feature] def selectFeaturesWithoutPool2(data: RDD[BV[Byte]], nToSelect: Int) = {
+  private[feature] def selectFeaturesWithoutPool(data: RDD[BV[Byte]], nToSelect: Int) = {
     
     val nElements = data.count()
     val nFeatures = data.first.size - 1
@@ -143,7 +143,7 @@ class InfoThSelector private[feature] (
       .collectAsMap()  
     // Print most relevant features
     val strRels = MiAndCmi.collect().sortBy(-_._2._1)
-      .take(nToSelect)
+      .take(100)
       .map({case ((f, _), (mi, _)) => f + "\t" + "%.4f" format mi})
       .mkString("\n")
     println("\n*** MaxRel features ***\nFeature\tScore\n" + strRels)  
@@ -170,6 +170,9 @@ class InfoThSelector private[feature] (
       // select the best feature and remove from the whole set of features
       selected = F(max._1, max._2.score) +: selected
       pool = pool - max._1
+      
+      val out = selected.map{case F(feat, rel) => feat + "\t" + "%.4f".format(rel)}.mkString("\n")
+      println("\n*** last features ***\nFeature\tScore\n" + out)
     }    
     selected.reverse
   }
@@ -183,7 +186,7 @@ class InfoThSelector private[feature] (
    * @param miniBatchFraction Fraction of data to be used in each iteration (just in case).
    * @return A list with the most relevant features and its scores
    */
-  private[mllib] def selectFeaturesWithPool(
+  private[mllib] def selectFeaturesWithPool2(
       data: RDD[BV[Byte]],
       nToSelect: Int,
       poolSize: Int) = {
@@ -296,7 +299,7 @@ class InfoThSelector private[feature] (
    * @return A list with the most relevant features and its scores.
    * 
    */
-  private[feature] def selectFeaturesWithPool2(
+  private[feature] def selectFeaturesWithPool(
       data: RDD[BV[Byte]], 
       nToSelect: Int, 
       poolSize: Int) = {
