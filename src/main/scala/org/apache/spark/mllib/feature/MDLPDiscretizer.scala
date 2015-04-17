@@ -22,6 +22,7 @@ import scala.collection.mutable
 import breeze.linalg.{SparseVector => BSV}
 
 import org.apache.spark.SparkContext._ 
+import org.apache.spark.storage.StorageLevel
 import org.apache.spark.Logging
 import org.apache.spark.rdd._
 import org.apache.spark.mllib.regression.LabeledPoint
@@ -374,6 +375,11 @@ class MDLPDiscretizer private (val data: RDD[LabeledPoint]) extends Serializable
       contFeat: Option[Seq[Int]], 
       elementsByPart: Int,
       maxBins: Int) = {
+    
+    if (data.getStorageLevel == StorageLevel.NONE) {
+      logWarning("The input data is not directly cached, which may hurt performance if its"
+        + " parent RDDs are also uncached.")
+    }
 
     val sc = data.context 
     val nInstances = data.count
@@ -452,12 +458,9 @@ class MDLPDiscretizer private (val data: RDD[LabeledPoint]) extends Serializable
     val bBigIndexes = sc.broadcast(bigIndexes)
       
     // Those feature with few points can be processed in a parallel way
-    val smallCandidatesByAtt = initialCandidates
+    val smallThresholds = initialCandidates
       .filter{case (k, _) => !bBigIndexes.value.contains(k) }
       .groupByKey()
-      .mapValues(_.toArray)
-                    
-    val smallThresholds = smallCandidatesByAtt
       .mapValues(points => getThresholds(points.toArray.sortBy(_._1), maxBins))
     
     // Feature with too many points must be processed iteratively (rare condition) exceed
@@ -478,7 +481,7 @@ class MDLPDiscretizer private (val data: RDD[LabeledPoint]) extends Serializable
   }
 }
 
-object MDLPDiscretizer {
+object MDLPDiscretizer extends {
 
   /**
    * Train a entropy minimization discretizer given an RDD of LabeledPoints.
@@ -493,8 +496,7 @@ object MDLPDiscretizer {
    * 
    */
   def train(
-      input:
-      RDD[LabeledPoint],
+      input: RDD[LabeledPoint],
       continuousFeaturesIndexes: Option[Seq[Int]] = None,
       maxBins: Int = 15,
       elementsByPart: Int = 10000) = {
