@@ -157,8 +157,10 @@ object MLExperimentUtils {
 		        
             // Save discretized data 
 		        if(save) {
-		           discData.saveAsTextFile(outputDir + "/disc_train_" + iteration + ".csv")
-		           discTestData.saveAsTextFile(outputDir + "/disc_test_" + iteration + ".csv")       
+             discData.map({lp => lp.features.toArray.mkString(",") + "," + lp.label})
+               .saveAsTextFile(outputDir + "/disc_train_" + iteration + ".csv")
+             discTestData.map({lp => lp.features.toArray.mkString(",") + "," + lp.label})
+               .saveAsTextFile(outputDir + "/disc_test_" + iteration + ".csv")       
 		        } 
         
 				(discData, discTestData, discTime)			
@@ -178,8 +180,10 @@ object MLExperimentUtils {
 		          
           // Save discretized data 
           if(save) {
-             discData.saveAsTextFile(outputDir + "/disc_train_" + iteration + ".csv")
-             discTestData.saveAsTextFile(outputDir + "/disc_test_" + iteration + ".csv")       
+             discData.map({lp => lp.features.toArray.mkString(",") + "," + lp.label})
+               .saveAsTextFile(outputDir + "/disc_train_" + iteration + ".csv")
+             discTestData.map({lp => lp.features.toArray.mkString(",") + "," + lp.label})
+               .saveAsTextFile(outputDir + "/disc_test_" + iteration + ".csv")       
           } 
 					
 					// Save the obtained thresholds in a HDFS file (as a sequence)
@@ -222,8 +226,10 @@ object MLExperimentUtils {
         
           // Save reduced data 
           if(save) {
-            redTrain.saveAsTextFile(outputDir + "/fs_train_" + iteration + ".csv")
-            redTest.saveAsTextFile(outputDir + "/fs_test_" + iteration + ".csv")      
+             redTrain.map({lp => lp.features.toArray.mkString(",") + "," + lp.label})
+               .saveAsTextFile(outputDir + "/fs_train_" + iteration + ".csv")
+             redTest.map({lp => lp.features.toArray.mkString(",") + "," + lp.label})
+               .saveAsTextFile(outputDir + "/fs_test_" + iteration + ".csv")     
           }         
         
 				(redTrain, redTest, FSTime)
@@ -237,8 +243,10 @@ object MLExperimentUtils {
           
           // Save reduced data 
           if(save) {
-            redTrain.saveAsTextFile(outputDir + "/fs_train_" + iteration + ".csv")
-            redTest.saveAsTextFile(outputDir + "/fs_test_" + iteration + ".csv")      
+             redTrain.map({lp => lp.features.toArray.mkString(",") + "," + lp.label})
+               .saveAsTextFile(outputDir + "/fs_train_" + iteration + ".csv")
+             redTest.map({lp => lp.features.toArray.mkString(",") + "," + lp.label})
+               .saveAsTextFile(outputDir + "/fs_test_" + iteration + ".csv")       
           }    
 					
 					// Save the obtained FS scheme in a HDFS file (as a sequence)					
