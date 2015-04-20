@@ -38,26 +38,12 @@ import org.apache.spark.mllib.feature.{InfoThCriterionFactory => FT}
  */
 @Experimental
 class InfoThSelector private[feature] (
-    val criterionFactory: FT, 
-    val data: RDD[LabeledPoint]) extends Serializable {
+    val criterionFactory: FT) extends Serializable {
 
   // Pool of criterions
   private type Pool = RDD[(Int, InfoThCriterion)]
   // Case class for criterions by feature
   protected case class F(feat: Int, crit: Double)
-    
-  val (nFeatures, isDense) = data.first.features match {
-    case v: SparseVector => (v.size, false)
-    case v: DenseVector => (v.size, true)
-  }
-  
-  val byteData: RDD[BV[Byte]] = data.map {
-    case LabeledPoint(label, values: SparseVector) => 
-      new BSV[Byte](0 +: values.indices.map(_ + 1), 
-        label.toByte +: values.values.toArray.map(_.toByte), values.indices.size + 1)
-    case LabeledPoint(label, values: DenseVector) => 
-      new BDV[Byte](label.toByte +: values.toArray.map(_.toByte))
-  }
 
   /**
    * Perform a info-theory selection process without pool optimization.
@@ -67,10 +53,10 @@ class InfoThSelector private[feature] (
    * @return A list with the most relevant features and its scores.
    * 
    */
-  private[feature] def selectFeaturesWithoutPool(data: RDD[BV[Byte]], nToSelect: Int) = {
+  private[feature] def selectFeaturesWithoutPool(data: RDD[LabeledPoint], nToSelect: Int) = {
     
     val nElements = data.count()
-    val nFeatures = data.first.size - 1
+    val nFeatures = data.first.features.size
     val label = 0
     
     // calculate relevance
@@ -120,10 +106,11 @@ class InfoThSelector private[feature] (
    * @return A list with the most relevant features and its scores.
    * 
    */
-  private[feature] def selectFeaturesWithPool(data: RDD[BV[Byte]],nToSelect: Int,poolSize: Int) = {
+  private[feature] def selectFeaturesWithPool(data: RDD[LabeledPoint],nToSelect: Int,poolSize: Int) = {
     
     val label = 0
     val nElements = data.count()
+    val nFeatures = data.first().features.size
     
     // calculate relevance for all attributes
     var orderedRels = IT.miAndCmi(data,1 to nFeatures, Seq(label), None, nElements, nFeatures)
@@ -200,17 +187,21 @@ class InfoThSelector private[feature] (
     selected.reverse
   }  
 
-  private[feature] def run(nToSelect: Int, poolSize: Int = 30) = {
+  private[feature] def run(data: RDD[LabeledPoint], nToSelect: Int, poolSize: Int = 30) = {
     
+    
+    data.persist(StorageLevel.MEMORY_AND_DISK_SER)
+    val nFeatures = data.first().features.size
     require(nToSelect < nFeatures)
-    val bdata = byteData.persist(StorageLevel.MEMORY_AND_DISK_SER)
     
     val selected = criterionFactory.getCriterion match {
       case _: InfoThCriterion with Bound if poolSize != 0 =>
-        selectFeaturesWithPool(bdata, nToSelect, poolSize)
+        selectFeaturesWithPool(data, nToSelect, poolSize)
       case _: InfoThCriterion =>
-        selectFeaturesWithoutPool(bdata, nToSelect)
+        selectFeaturesWithoutPool(data, nToSelect)
     }
+    
+    data.unpersist()
     
     // Print best features according to the mRMR measure
     val out = selected.map{case F(feat, rel) => feat + "\t" + "%.4f".format(rel)}.mkString("\n")
@@ -242,6 +233,6 @@ object InfoThSelector {
       data: RDD[LabeledPoint],
       nToSelect: Int = 25,
       poolSize: Int = 0) = {
-    new InfoThSelector(criterionFactory, data).run(nToSelect, poolSize)
+    new InfoThSelector(criterionFactory).run(data, nToSelect, poolSize)
   }
 }
