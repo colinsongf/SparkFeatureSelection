@@ -33,6 +33,9 @@ object InfoTheory {
 
   private val log2 = { x: Double => math.log(x) / math.log(2) } 
   
+  private var marginals: RDD[(Int, Map[Double, Double])] = null
+  private var joints: RDD[(Int, Map[(Double, Double), Double])] = null  
+  
   /**
    * Calculate entropy for the given frequencies.
    *
@@ -106,19 +109,70 @@ object InfoTheory {
       case v: DenseVector =>
         val generator = DenseGenerator(_: LabeledPoint, bvarX, varY, varZ)
         val comb = data.flatMap(generator).reduceByKey(new Key1Partitioner(1000), _ + _)
-        val relevances = computeRelevances(comb, n, nFeatures)
-        relevances.cache()
+        val relevCalcs = computeRelevances(comb, n, nFeatures)
+        relevCalcs.cache()
+        val relevances = relevCalcs.mapValues(_._1)
+        marginals = relevCalcs.mapValues(_._2).cache()
+        joints = relevCalcs.mapValues(_._3).cache()
+        relevCalcs.unpersist()  
+        relevances
       case v: SparseVector =>     
         // Not implemented yet!
         throw new NotImplementedError()
     }
   }
   
+  private def computeRelevances(
+    combinations: RDD[((Int, Double, Double, Option[Double]), Long)],
+    n: Long,
+    indz: Int) = {
+      val numPartitions = combinations.partitions.length
+      combinations.mapPartitionsWithIndex({ (index, it) => 
+        var newit = Seq.empty[(Int, (Float, Map[Double, Double], 
+              Map[(Double, Double), Double]))]
+        if (it.hasNext) {     
+          var mapx = Map.empty[Double, Double]
+          var mapz = Map.empty[Double, Double]
+          var mapxz = Map.empty[(Double, Double), Double]
+          val computeMI = (x: Double, z: Double, q: Double) => {
+            val px = mapx.getOrElse(x, 0d) / n
+            val pz = mapz.getOrElse(z, 0d) / n
+            val pxz = q / n
+            pxz * (math.log(pxz / px * pz) / math.log(2)) 
+          }
+          
+          var currx = it.next._1._1
+          for(((kx, x, z, _), q) <- it) {
+            if(currx != kx) {              
+              val minfo = mapxz.map{ case ((x, z), q) => 
+                computeMI(x, z, q) }.sum.toFloat
+              newit = (kx, (minfo, mapx, mapxz)) +: newit
+              // Last calculation of P(Z), so we add it
+              if(index == numPartitions - 1) {
+                newit = (indz, (0.0f, mapx, 
+                    Map.empty[(Double, Double), Double])) +: newit
+              }
+              mapx = mapx.empty; mapz = mapz.empty; mapxz = mapxz.empty
+              currx = kx 
+            }
+            mapx += x -> (mapx.getOrElse(x, 0d) + q)
+            mapz += z -> (mapz.getOrElse(z, 0d) + q)
+            mapxz += (x, z) -> (mapxz.getOrElse((x, z), 0d) + q)
+          }
+          val minfo = mapxz.map{ case ((x, z), q) => 
+                computeMI(x, z, q) }.sum.toFloat
+          newit = (currx, (minfo, mapx, mapxz)) +: newit          
+        }
+        
+        newit.toIterator
+      })      
+  }
+  
   def getRedundancies(
       data: RDD[LabeledPoint],
       varX: Seq[Int],
       varY: Int,
-      varZ: Option[Int],
+      varZ: Int,
       n: Long,      
       nFeatures: Int, 
       inverseX: Boolean = false) = {
@@ -133,9 +187,9 @@ object InfoTheory {
     // Common function to generate pairs, it choose between sparse and dense processing 
     data.first.features match {
       case v: DenseVector =>
-        val generator = DenseGenerator(_: LabeledPoint, bvarX, varY, varZ)
+        val generator = DenseGenerator(_: LabeledPoint, bvarX, varY, Some(varZ))
         val comb = data.flatMap(generator).reduceByKey(new Key1Partitioner(1000), _ + _)
-        val relevances = computeRedundancies(comb, n, nFeatures)
+        val relevances = computeRedundancies(comb, n, varY, varZ, nFeatures)
         relevances.cache()
       case v: SparseVector =>     
         // Not implemented yet!
@@ -143,51 +197,69 @@ object InfoTheory {
     }
   }
   
-  private def computeRelevances(
+  private def computeRedundancies(
     combinations: RDD[((Int, Double, Double, Option[Double]), Long)],
     n: Long,
+    varY: Int,
+    varZ: Int,
     indz: Int) = {
+      if(joints == null || marginals == null) throw new Exception()
+      val sc = combinations.context
+      val mpyz = sc.broadcast(joints.lookup(varY)(0))
+      val mpy = sc.broadcast(marginals.lookup(varY)(0))
+      val mpz = sc.broadcast(marginals.lookup(varZ)(0))
       val numPartitions = combinations.partitions.length
-      combinations.mapPartitionsWithIndex({ (index, it) => 
-        val elems = it.toArray        
-        var newit = Seq.empty[(Int, (Float, Map[Double, Long], 
-            Map[(Double, Double), Long]))]
-        var mapx = Map.empty[Double, Long]
-        var mapz = Map.empty[Double, Long]
-        var mapxz = Map.empty[(Double, Double), Long]
-        val computeMI = (x: Double, z: Double, q: Long) => {
-          val px = mapx.getOrElse(x, 0L) / n
-          val pz = mapz.getOrElse(z, 0L) / n
-          val pxz = q / n
-          pxz * (math.log(pxz / px * pz) / math.log(2)) 
+      
+      combinations.mapPartitions({ it => 
+        val elems = it.toArray
+        var newit = Seq.empty[(Int, (Float, Float))]
+        
+        if (!elems.isEmpty) {     
+          var mapxy = Map.empty[(Double, Double), Double]
+          var mapxz = Map.empty[(Double, Double), Double]
+          var mapx = Map.empty[Double, Double]
+          val computeMIandCMI = (x: Double, y: Double, z: Double, qxyz: Double) => {
+            val px = mapx.getOrElse(x, 0d) / n
+            val py = mpy.value.getOrElse(y, 0d) / n
+            val pz = mpz.value.getOrElse(z, 0d) / n
+            val pxy = mapxy.getOrElse((x,y), 0d) / n
+            val pxz = mapxz.getOrElse((x,z), 0d) / n
+            val pyz = mpyz.value.getOrElse((y, z), 0d) / n
+            val pxyz = qxyz / n
+            (pxz * (math.log(pxz / px * pz) / math.log(2)),
+                pxyz * (math.log(pz * pxyz / pxz * pyz) / math.log(2)))
+          }
+                    
+          var (currx, idx) = (elems(0)._1._1, 0)
+          for(i <- 1 until elems.size) {
+            val ((kx, x, y, z), q) = elems(i)
+            if(currx != kx) {
+              var mi = 0.0; var cmi = 0.0
+              for(j <- idx until i) {
+                val ((_, x, y, z), q) = elems(j)
+                val psum = computeMIandCMI(x, y, z.get, q)
+                mi += psum._1; cmi += psum._2
+              }              
+              newit = (kx, (mi.toFloat, cmi.toFloat)) +: newit
+              mapxy = mapxy.empty; mapxz = mapxz.empty; mapx = mapx.empty 
+              currx = kx; idx = i                      
+            }  
+            mapx += x -> (mapx.getOrElse(x, 0d) + q)
+            mapxz += (x,z.get) -> (mapxz.getOrElse((x,z.get), 0d) + q)
+            mapxy += (x,y) -> (mapxy.getOrElse((x,y), 0d) + q)
+          }
+          
+          var mi = 0.0; var cmi = 0.0
+          for(j <- idx until elems.size) {
+            val ((_, x, y, z), q) = elems(j)
+            val psum = computeMIandCMI(x, y, z.get, q)
+            mi += psum._1; cmi += psum._2
+          }
+              
+          newit = (currx, (mi.toFloat, cmi.toFloat)) +: newit          
         }
-        var prevkx = elems(0)._1._1
-        for(i <- 0 until elems.size) {
-          var ((kx, x, z, _), q) = elems(i)
-          if(prevkx == kx) {
-            mapx += x -> (mapx.getOrElse(x, 0L) + 1)
-            mapz += z -> (mapz.getOrElse(z, 0L) + 1)
-            mapxz += (x, z) -> (mapxz.getOrElse((x, z), 0L) + 1)                        
-          } else {
-            val minfo = mapxz.map{ case ((x, z), q) => 
-              computeMI(x, z, q) }.sum.toFloat
-            newit = (kx, (minfo, mapx, mapxz)) +: newit
-            // Last calculation of P(Z), so we add it
-            if(index == numPartitions - 1) {
-              newit = (indz, (0.0f, mapx, 
-                  Map.empty[(Double, Double), Long])) +: newit
-            }
-            mapx = Map.empty[Double, Long]
-            mapz = Map.empty[Double, Long]
-            mapxz = Map.empty[(Double, Double), Long]            
-          } 
-          prevkx = kx 
-        }
-        val minfo = mapxz.map{ case ((x, z), q) => 
-              computeMI(x, z, q) }.sum.toFloat
-        newit = (prevkx, (minfo, mapx, mapxz)) +: newit
-        newit.reverse.toIterator
-    })      
+        newit.toIterator
+      })      
   }
   
   class Key1Partitioner(numParts: Int) extends Partitioner {

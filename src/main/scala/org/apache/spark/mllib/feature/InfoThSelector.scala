@@ -60,13 +60,13 @@ class InfoThSelector private[feature] (
     val label = 0
     
     // calculate relevance
-    val MiAndCmi = IT.miAndCmi(data, 1 to nFeatures, Seq(label), None, nElements, nFeatures)
-    var pool = MiAndCmi.map{case ((x, y), (mi, _)) => (x, criterionFactory.getCriterion.init(mi))}
+    val MiAndCmi = IT.getRelevances(data, 1 to nFeatures, label, None, nElements, nFeatures)
+    var pool = MiAndCmi.map{case (x, mi) => (x, criterionFactory.getCriterion.init(mi))}
       .collectAsMap()  
     // Print most relevant features
-    val strRels = MiAndCmi.collect().sortBy(-_._2._1)
+    val strRels = MiAndCmi.collect().sortBy(-_._2)
       .take(nToSelect)
-      .map({case ((f, _), (mi, _)) => f + "\t" + "%.4f" format mi})
+      .map({case (f, mi) => f + "\t" + "%.4f" format mi})
       .mkString("\n")
     // println("\n*** MaxRel features ***\nFeature\tScore\n" + strRels)  
     // get maximum and select it
@@ -76,9 +76,9 @@ class InfoThSelector private[feature] (
 
     while (selected.size < nToSelect) {
       // update pool
-      val newMiAndCmi = IT.miAndCmi(data, pool.keys.toSeq, Seq(selected.head.feat), Some(label), 
+      val newMiAndCmi = IT.getRedundancies(data, pool.keys.toSeq, selected.head.feat, label, 
         nElements, nFeatures) 
-        .map({ case ((x, _), crit) => (x, crit) })
+        .map({ case (x, crit) => (x, crit) })
         .collectAsMap()
       pool.foreach({ case (k, crit) =>
         newMiAndCmi.get(k) match {
