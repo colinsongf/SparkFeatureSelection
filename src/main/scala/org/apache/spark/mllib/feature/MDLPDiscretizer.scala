@@ -461,6 +461,7 @@ class MDLPDiscretizer private (val data: RDD[LabeledPoint]) extends Serializable
     val smallThresholds = initialCandidates
       .filter{case (k, _) => !bBigIndexes.value.contains(k) }
       .groupByKey()
+      .mapValues(_.toArray)
       .mapValues(points => getThresholds(points.toArray.sortBy(_._1), maxBins))
     
     // Feature with too many points must be processed iteratively (rare condition) exceed

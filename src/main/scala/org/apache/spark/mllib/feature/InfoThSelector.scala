@@ -53,14 +53,14 @@ class InfoThSelector private[feature] (
    * @return A list with the most relevant features and its scores.
    * 
    */
-  private[feature] def selectFeaturesWithoutPool(data: RDD[LabeledPoint], nToSelect: Int) = {
+  private[feature] def selectFeaturesWithoutPool(data: RDD[BV[Float]], nToSelect: Int) = {
     
     val nElements = data.count()
-    val nFeatures = data.first.features.size
+    val nFeatures = data.first.length - 1
     val label = 0
     
     // calculate relevance
-    val MiAndCmi = IT.getRelevances(data, 1 to nFeatures, label, None, nElements, nFeatures)
+    val MiAndCmi = IT.getRelevances(data, 1 to nFeatures, label, nElements, nFeatures)
     var pool = MiAndCmi.map{case (x, mi) => (x, criterionFactory.getCriterion.init(mi))}
       .collectAsMap()  
     // Print most relevant features
@@ -68,7 +68,7 @@ class InfoThSelector private[feature] (
       .take(nToSelect)
       .map({case (f, mi) => f + "\t" + "%.4f" format mi})
       .mkString("\n")
-    // println("\n*** MaxRel features ***\nFeature\tScore\n" + strRels)  
+    println("\n*** MaxRel features ***\nFeature\tScore\n" + strRels)  
     // get maximum and select it
     val firstMax = pool.maxBy(_._2.score)
     var selected = Seq(F(firstMax._1, firstMax._2.score))
@@ -106,7 +106,7 @@ class InfoThSelector private[feature] (
    * @return A list with the most relevant features and its scores.
    * 
    */
-  private[feature] def selectFeaturesWithPool(data: RDD[LabeledPoint],nToSelect: Int,poolSize: Int) = {
+/*  private[feature] def selectFeaturesWithPool(data: RDD[LabeledPoint],nToSelect: Int,poolSize: Int) = {
     
     val label = 0
     val nElements = data.count()
@@ -185,23 +185,30 @@ class InfoThSelector private[feature] (
       pool = pool - max._1
     }
     selected.reverse
-  }  
+  }  */
 
   private[feature] def run(data: RDD[LabeledPoint], nToSelect: Int, poolSize: Int = 30) = {
     
+    val arrData: RDD[BV[Float]] = data.map {
+      case LabeledPoint(label, values: SparseVector) => 
+        new BSV[Float](0 +: values.indices.map(_ + 1), 
+          label.toFloat +: values.values.toArray.map(_.toFloat), values.indices.size + 1)
+      case LabeledPoint(label, values: DenseVector) => 
+        new BDV[Float](label.toFloat +: values.toArray.map(_.toFloat))
+    }
     
-    data.persist(StorageLevel.MEMORY_AND_DISK_SER)
-    val nFeatures = data.first().features.size
+    arrData.persist(StorageLevel.MEMORY_AND_DISK_SER)
+    val nFeatures = arrData.first().length - 1
     require(nToSelect < nFeatures)
     
     val selected = criterionFactory.getCriterion match {
       case _: InfoThCriterion with Bound if poolSize != 0 =>
-        selectFeaturesWithPool(data, nToSelect, poolSize)
+        selectFeaturesWithoutPool(arrData, nToSelect)
       case _: InfoThCriterion =>
-        selectFeaturesWithoutPool(data, nToSelect)
+        selectFeaturesWithoutPool(arrData, nToSelect)
     }
     
-    data.unpersist()
+    arrData.unpersist()
     
     // Print best features according to the mRMR measure
     val out = selected.map{case F(feat, rel) => feat + "\t" + "%.4f".format(rel)}.mkString("\n")
