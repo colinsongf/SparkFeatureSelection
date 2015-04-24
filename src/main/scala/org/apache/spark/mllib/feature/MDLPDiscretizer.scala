@@ -382,7 +382,6 @@ class MDLPDiscretizer private (val data: RDD[LabeledPoint]) extends Serializable
     }
 
     val sc = data.context 
-    val nInstances = data.count
     val bLabels2Int = sc.broadcast(labels2Int)
     val classDistrib = data.map(d => bLabels2Int.value(d.label)).countByValue()
     val bclassDistrib = sc.broadcast(classDistrib)
@@ -390,7 +389,7 @@ class MDLPDiscretizer private (val data: RDD[LabeledPoint]) extends Serializable
       case v: DenseVector => 
         (true, v.size)
       case v: SparseVector =>         
-          (false, v.size)
+        (false, v.size)
     }
             
     val continuousVars = processContinuousAttributes(contFeat, nFeatures, dense)
@@ -427,7 +426,7 @@ class MDLPDiscretizer private (val data: RDD[LabeledPoint]) extends Serializable
     val nonzeros = featureValues.reduceByKey{ case (v1, v2) => 
       (v1, v2).zipped.map(_ + _)
     }
-      
+    
     // Add zero elements for sparse data
     val zeros = nonzeros
       .map{case ((k, p), v) => (k, v)}
@@ -440,7 +439,7 @@ class MDLPDiscretizer private (val data: RDD[LabeledPoint]) extends Serializable
     
     // Sort these values to perform the boundary points evaluation
     val sortedValues = distinctValues.sortByKey()   
-          
+    
     // Get the first elements by partition for the boundary points evaluation
     val firstElements = sc.runJob(sortedValues, { case it =>
       if (it.hasNext) Some(it.next()._1) else None
@@ -476,12 +475,18 @@ class MDLPDiscretizer private (val data: RDD[LabeledPoint]) extends Serializable
     val bigThRDD = sc.parallelize(bigThresholds.toSeq)
     val thresholds = smallThresholds.union(bigThRDD)
       .sortByKey() // Important!
-      .collect                        
+      .collect
+    
+    if (data.getStorageLevel == StorageLevel.NONE) {
+      logWarning("The input data is not directly cached, which may hurt performance if its"
+        + " parent RDDs are also uncached.")
+    }
+      
     new DiscretizerModel(thresholds)
   }
 }
 
-object MDLPDiscretizer extends {
+object MDLPDiscretizer {
 
   /**
    * Train a entropy minimization discretizer given an RDD of LabeledPoints.
