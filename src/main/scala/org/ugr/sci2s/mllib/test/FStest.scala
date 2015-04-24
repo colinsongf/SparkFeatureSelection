@@ -28,7 +28,7 @@ object FStest {
       //  new LabeledPoint(arr.last, Vectors.dense(arr.slice(0, arr.length - 1)))
       //}
     
-    val discretizer = MDLPDiscretizer.train(data)
+    val discretizer = MDLPDiscretizer.train(data, None)
     val discData = data.map { lp => 
       LabeledPoint(lp.label, discretizer.transform(lp.features)) 
     } 
