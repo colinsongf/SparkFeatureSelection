@@ -82,7 +82,7 @@ class InfoThSelector private[feature] (
       .take(nToSelect)
       .map({case ((f, _), (mi, _)) => f + "\t" + "%.4f" format mi})
       .mkString("\n")
-    // println("\n*** MaxRel features ***\nFeature\tScore\n" + strRels)  
+    println("\n*** MaxRel features ***\nFeature\tScore\n" + strRels)  
     // get maximum and select it
     val firstMax = pool.maxBy(_._2.score)
     var selected = Seq(F(firstMax._1, firstMax._2.score))
