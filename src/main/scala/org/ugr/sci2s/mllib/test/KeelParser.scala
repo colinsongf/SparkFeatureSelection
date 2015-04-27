@@ -45,10 +45,11 @@ object KeelParser {
 		require(tokens.length == conv.length)
 		
 		val arr = (conv, tokens).zipped.map{(c, elem) => 
-            c.get("min") match {
+      c.getOrElse(elem, elem.toDouble)
+            /*c.get("min") match {
               case Some(min) => elem.toDouble - min
               case None => c.getOrElse(elem, elem.toDouble)
-            }           
+            } */          
         }
         
 		val features = arr.slice(0, arr.length - 1)
