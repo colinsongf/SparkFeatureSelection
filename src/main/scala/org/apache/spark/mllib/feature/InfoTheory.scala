@@ -147,17 +147,18 @@ object InfoTheory {
         // Get mutual informations values using previous frequency counter
         val minst = test.map{ case ((kx, x, z, _), q) =>           
           val px = freqx.getOrElse(kx, Map.empty).getOrElse(x, 0L).toDouble / n
-          val pz = freqy.value.getOrElse(z, 0L).toDouble / n
-          val pxz = q.toDouble / n
-          println("Tuples: " + kx + "," + x + "," + z + px + "," + pz + "," + pxz)
-          (kx, pxz * (math.log(pxz / (px * pz)) / math.log(2)))
+          val py = freqy.value.getOrElse(z, 0L).toDouble / n
+          val pxy = q.toDouble / n
+          val mi = pxy * (math.log(pxy / (px * py)) / math.log(2))
+          println("Tuples: " + kx + "," + x + "," + z + " - " + px + "," + py + "," + pxy + "," + mi)
+          (kx, pxy * (math.log(pxy / (px * py)) / math.log(2)))
         }
         
         println("MInfo: " + minst.mkString("\n"))
         
         // Group instances by key and compute the final tuple result        
         var result = minst.groupBy(_._1).map{ case (k, a) =>
-          val mi = a.map(_._2).sum / n
+          val mi = a.map(_._2).sum
           (k, (mi, freqx(k), freqxz(k)))
         }
         
@@ -188,7 +189,7 @@ object InfoTheory {
         
         // Group instances by key and compute the final tuple result        
         var result = minst.groupBy(_._1).map{ case (k, a) =>
-          val mi = a.map(_._2).sum / n
+          val mi = a.map(_._2).sum
           (k, (mi, freqx(k), freqxy(k)))
         }
         
