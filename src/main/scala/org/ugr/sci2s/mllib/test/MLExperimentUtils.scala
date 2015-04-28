@@ -167,9 +167,13 @@ object MLExperimentUtils {
 				
 			} catch {
 				case iie: org.apache.hadoop.mapred.InvalidInputException =>
+          train.persist(StorageLevel.MEMORY_ONLY_SER)
+          val nInstances = train.count() // to persist train and not to affect time measurements
 					val initStartTime = System.nanoTime()
 					val discAlgorithm = discretize(train)
 					val discTime = (System.nanoTime() - initStartTime) / 1e9
+          train.unpersist()
+          
           // More efficient than by-instance version
           val discData = discAlgorithm.transform(train.map(_.features))
             .zip(train.map(_.label))
@@ -290,10 +294,12 @@ object MLExperimentUtils {
 				(traValuesAndPreds, tstValuesAndPreds, classifficationTime)
 			} catch {
 				case iie: org.apache.hadoop.mapred.InvalidInputException => 
+          train.persist(StorageLevel.MEMORY_ONLY_SER)
           val nInstances = train.count() // to persist train and not to affect time measurements
 					val initStartTime = System.nanoTime()	
 					val classificationModel = classify(train)
 					val classificationTime = (System.nanoTime() - initStartTime) / 1e9
+          train.unpersist()
 					
 					val traValuesAndPreds = computePredictions(classificationModel, train)
 					val tstValuesAndPreds = computePredictions(classificationModel, test)
@@ -388,8 +394,7 @@ object MLExperimentUtils {
 				val testData = readFile(testFile)
 				
 				// Discretization
-				var trData = trainData; var tstData = testData
-        trData.cache() // Data are called repeatedly in MDLP discretizer
+				var trData = trainData; var tstData = testData        
 				var taskTime = 0.0
 				discretize match { 
 				  case (Some(disc), b) => 
@@ -398,10 +403,10 @@ object MLExperimentUtils {
 					trData = discTrData
 					tstData = discTstData
 					taskTime = discTime
+          trData.unpersist()
 				  case _ => /* criteria not fulfilled, do not discretize */
 				}				
-				times("DiscTime") = times("DiscTime") :+ taskTime
-        trData.unpersist()
+				times("DiscTime") = times("DiscTime") :+ taskTime         
 
 				// Feature Selection
 				featureSelect match { 
@@ -422,7 +427,7 @@ object MLExperimentUtils {
 				classify match { 
 				  case Some(cls) => 
 				    val (traValuesAndPreds, tstValuesAndPreds, classificationTime) = 
-				  		classification(cls, trData.cache, tstData.cache, outputDir, i)
+				  		classification(cls, trData, tstData, outputDir, i)
 					taskTime = classificationTime
 					/* Confusion matrix for the test set */
 					//confusionMatrices :+ ConfusionMatrix.apply(tstValuesAndPreds, typeConversion.last)
