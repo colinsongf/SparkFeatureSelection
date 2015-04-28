@@ -60,7 +60,7 @@ class InfoThSelector private[feature] (
     val label = 0
     
     // calculate relevance
-    val MiAndCmi = IT.getRelevances(data, 1 to nFeatures, label, nElements, nFeatures)
+    val MiAndCmi = IT.computeMI(data, 1 to nFeatures, label, nElements, nFeatures)
     var pool = MiAndCmi.map{case (x, mi) => (x, criterionFactory.getCriterion.init(mi))}
       .collectAsMap()  
     // Print most relevant features
@@ -76,7 +76,7 @@ class InfoThSelector private[feature] (
 
     while (selected.size < nToSelect) {
       // update pool
-      val newMiAndCmi = IT.getRedundancies(data, pool.keys.toSeq, selected.head.feat, label, 
+      val newMiAndCmi = IT.computeCMIandMI(data, pool.keys.toSeq, selected.head.feat, label, 
         nElements, nFeatures) 
         .map({ case (x, crit) => (x, crit) })
         .collectAsMap()
@@ -86,12 +86,18 @@ class InfoThSelector private[feature] (
           case None => 
         }
       })
-
+      
+      /*val strRels = pool.toArray.sortBy(-_._2.score)
+      .take(100)
+      .map({case (f, cr) => f + "\t" + "%.4f" format cr.score})
+      .mkString("\n")
+      println("\n*** Partial features ***\nFeature\tScore\n" + strRels) */
+      
       // get maximum and save it
       val max = pool.maxBy(_._2.score)
       // select the best feature and remove from the whole set of features
       selected = F(max._1, max._2.score) +: selected
-      pool = pool - max._1
+      pool = pool - max._1 
     }    
     selected.reverse
   }
