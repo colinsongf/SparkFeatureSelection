@@ -203,7 +203,7 @@ class InfoThSelector private[feature] (
         new BDV[Float](label.toFloat +: values.toArray.map(_.toFloat))
     }
     
-    arrData.persist(StorageLevel.MEMORY_AND_DISK_SER)
+    arrData.persist(StorageLevel.MEMORY_ONLY_SER)
     val nFeatures = arrData.first().length - 1
     require(nToSelect < nFeatures)
     
