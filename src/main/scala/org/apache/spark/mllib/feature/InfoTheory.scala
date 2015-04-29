@@ -105,7 +105,7 @@ object InfoTheory {
       case v: BDV[Byte] =>
         val generator = DenseGenerator(_: BV[Byte], bvarX, varY, None)
         marginalClass = data.map(_(varY)).countByValue()
-        val comb = data.flatMap(generator).reduceByKey(new Key1Partitioner(600), _ + _)
+        val comb = data.flatMap(generator).reduceByKey(new Key1Partitioner(4), _ + _)
         val miStruct = getMI(comb, n)
         val miValues = miStruct.mapValues(_._1)
         marginals = miStruct.mapValues(_._2).cache()
