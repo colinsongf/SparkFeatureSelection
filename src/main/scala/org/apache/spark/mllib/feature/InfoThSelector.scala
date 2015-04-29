@@ -19,6 +19,7 @@ package org.apache.spark.mllib.feature
 
 
 import breeze.linalg.{DenseVector => BDV, SparseVector => BSV, Vector => BV}
+
 import org.apache.spark.SparkContext._
 import org.apache.spark.rdd.RDD
 import org.apache.spark.mllib.regression.LabeledPoint
@@ -36,7 +37,6 @@ import org.apache.spark.SparkException
  * @param data RDD of LabeledPoint (discrete data).
  * 
  */
-@Experimental
 class InfoThSelector private[feature] (val criterionFactory: FT) extends Serializable {
 
   // Pool of criterions
@@ -201,7 +201,7 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
           val condition = (value: Double) => value <= Byte.MaxValue && 
             value >= Byte.MinValue && value % 1 == 0.0
           if (!values.forall(condition(_)) && !condition(l)) {
-            throw new SparkException(s"Info-Theoretic Framework requires byte values")
+            throw new SparkException(s"Info-Theoretic Framework requires integer values in range [0, 255]")
           }
         }
         
@@ -243,7 +243,7 @@ object InfoThSelector {
    * and return a subset of data.
    *
    * @param   criterionFactory Initialized criterion to use in this selector
-   * @param   data RDD of LabeledPoint (discrete data in range of 256 values).
+   * @param   data RDD of LabeledPoint (discrete data as integers in range [0, 255]).
    * @param   nToSelect maximum number of features to select
    * @param   poolSize number of features to be used in pool optimization.
    * @return  A feature selection model which contains a subset of selected features
