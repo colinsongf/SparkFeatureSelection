@@ -200,7 +200,7 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
           }
           val condition = (value: Double) => value <= Byte.MaxValue && 
             value >= Byte.MinValue && value % 1 == 0.0
-          if (!values.forall(condition(_)) && !condition(l)) {
+          if (!values.forall(condition(_)) || !condition(l)) {
             throw new SparkException(s"Info-Theoretic Framework requires integer values in range [0, 255]")
           }
         }
