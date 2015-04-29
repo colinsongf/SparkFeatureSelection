@@ -32,9 +32,9 @@ import scala.collection.mutable.HashSet
  */
 object InfoTheory {
   
-  private var marginalClass: scala.collection.Map[Float, Long] = null
-  private var marginals: RDD[(Int, Map[Float, Long])] = null
-  private var joints: RDD[(Int, (Map[(Float, Float), Long]))] = null  
+  private var marginalClass: scala.collection.Map[Byte, Long] = null
+  private var marginals: RDD[(Int, Map[Byte, Long])] = null
+  private var joints: RDD[(Int, (Map[(Byte, Byte), Long]))] = null  
   
   /**
    * Calculate entropy for the given frequencies.
@@ -60,13 +60,13 @@ object InfoTheory {
   
   /* Pair generator for dense data */
   private def DenseGenerator(
-      bv: BV[Float], 
+      bv: BV[Byte], 
       varX: Broadcast[Seq[Int]],
       varY: Int,
       varZ: Option[Int]) = {
     
      val zval = varZ match {case Some(z) => Some(bv(z)) case None => None}     
-     var pairs = Seq.empty[((Int, Float, Float, Option[Float]), Long)]
+     var pairs = Seq.empty[((Int, Byte, Byte, Option[Byte]), Long)]
      
      for(xind <- varX.value){
        pairs = ((xind, bv(xind), bv(varY), zval), 1L) +: pairs
@@ -87,7 +87,7 @@ object InfoTheory {
    * 
    */
   def computeMI(
-      data: RDD[BV[Float]],
+      data: RDD[BV[Byte]],
       varX: Seq[Int],
       varY: Int,
       n: Long,      
@@ -102,8 +102,8 @@ object InfoTheory {
     
     // Common function to generate pairs, it choose between sparse and dense processing 
     data.first match {
-      case v: BDV[Float] =>
-        val generator = DenseGenerator(_: BV[Float], bvarX, varY, None)
+      case v: BDV[Byte] =>
+        val generator = DenseGenerator(_: BV[Byte], bvarX, varY, None)
         marginalClass = data.map(_(varY)).countByValue()
         val comb = data.flatMap(generator).reduceByKey(new Key1Partitioner(600), _ + _)
         val miStruct = getMI(comb, n)
@@ -111,22 +111,22 @@ object InfoTheory {
         marginals = miStruct.mapValues(_._2).cache()
         joints = miStruct.mapValues(_._3).cache()
         miValues
-      case v: BSV[Float] =>     
+      case v: BSV[Byte] =>     
         // Not implemented yet!
         throw new NotImplementedError()
     }
   }
   
   private def getMI(
-    combinations: RDD[((Int, Float, Float, Option[Float]), Long)],
+    combinations: RDD[((Int, Byte, Byte, Option[Byte]), Long)],
     n: Long,
     saveProb: Boolean = false) = {
     
       val freqy = combinations.context.broadcast(marginalClass)      
       combinations.mapPartitions({ it => 
         val elems = it.toArray
-        var freqx = Map.empty[Int, Map[Float, Long]]
-        var freqxy = Map.empty[Int, Map[(Float, Float), Long]]
+        var freqx = Map.empty[Int, Map[Byte, Long]]
+        var freqxy = Map.empty[Int, Map[(Byte, Byte), Long]]
         
         // Compute freq counters for marginal and joint probabilities (all inputs)
         elems.map{ case ((kx, x, y, _), q) =>
@@ -158,7 +158,7 @@ object InfoTheory {
   }
   
   def computeCMIandMI(
-      data: RDD[BV[Float]],
+      data: RDD[BV[Byte]],
       varX: Seq[Int],
       varY: Int,
       varZ: Int,
@@ -174,18 +174,18 @@ object InfoTheory {
     
     // Common function to generate pairs, it choose between sparse and dense processing 
     data.first match {
-      case v: BDV[Float] =>
-        val generator = DenseGenerator(_: BV[Float], bvarX, varY, Some(varZ))
-        val comb = data.flatMap(generator).reduceByKey(new Key1Partitioner(600), _ + _)
+      case v: BDV[Byte] =>
+        val generator = DenseGenerator(_: BV[Byte], bvarX, varY, Some(varZ))
+        val comb = data.flatMap(generator).reduceByKey(new Key1Partitioner(4), _ + _)
         getCMIandMI(comb, n, varY, varZ)
-      case v: BSV[Float] =>
+      case v: BSV[Byte] =>
         // Not implemented yet!
         throw new NotImplementedError()
     }
   }
   
   private def getCMIandMI(
-    combinations: RDD[((Int, Float, Float, Option[Float]), Long)],
+    combinations: RDD[((Int, Byte, Byte, Option[Byte]), Long)],
     n: Long,
     varY: Int,
     varZ: Int) = {
@@ -199,9 +199,9 @@ object InfoTheory {
       combinations.mapPartitions({ it => 
         
         val elems = it.toArray
-        var freqx = Map.empty[Int, Map[Float, Long]]
-        var freqxz = Map.empty[Int, Map[(Float, Float), Long]]
-        var freqxy = Map.empty[Int, Map[(Float, Float), Long]]
+        var freqx = Map.empty[Int, Map[Byte, Long]]
+        var freqxz = Map.empty[Int, Map[(Byte, Byte), Long]]
+        var freqxy = Map.empty[Int, Map[(Byte, Byte), Long]]
         
         // Compute frequency counters for marginal and joint probabilities (xz, xy, x)
         elems.map{ case ((kx, x, y, z), q) =>
