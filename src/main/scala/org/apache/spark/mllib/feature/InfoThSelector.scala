@@ -54,7 +54,7 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
    * 
    */
   private[feature] def selectFeaturesWithoutPool(
-      data: RDD[(Int, Byte)], 
+      data: RDD[(Long, Byte)], 
       nToSelect: Int,
       nFeatures: Int,
       nInstances: Long) = {
@@ -213,41 +213,36 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
           }
         }
         
-        val temp: RDD[((Int, Long), Byte)] = data.zipWithIndex().flatMap ({
+        val nAllFeatures = data.first.features.size + 1
+        
+        val columnarData: RDD[(Long, Byte)] = data.zipWithIndex().flatMap ({
           case (LabeledPoint(label, values: SparseVector), r) => 
             requireByteValues(label, values)
             // Not implemented yet!
             throw new NotImplementedError()
-            val inputs = for(i <- values.indices) yield ((i, r), values(i).toByte)
-            val output = Array(((values.size, r), label.toByte))
+            val inputs = for(i <- 0 until values.size) yield (r + i, values(i).toByte)
+            val output = Array((r + values.size, label.toByte))
             inputs ++ output           
           case (LabeledPoint(label, values: DenseVector), r) => 
             requireByteValues(label, values)
-            val inputs = for(i <- 0 until values.size) yield ((i, r), values(i).toByte)
-            val output = Array(((values.size, r), label.toByte))
+            val inputs = for(i <- 0 until values.size) yield (r + i, values(i).toByte)
+            val output = Array((r + values.size, label.toByte))
             inputs ++ output    
-        })
+        }).sortByKey()
         
-        //.map({ case ((a, r), v) => (a, v)})
-        val dataColumn = temp.sortByKey()
-          .mapPartitions({ it =>
-            for(((a, r), v) <- it) yield (a, v)          
-          }, preservesPartitioning = true)
+        columnarData.persist(StorageLevel.MEMORY_AND_DISK_SER)
         
-        dataColumn.persist(StorageLevel.MEMORY_ONLY_SER)
-        
-        val nFeatures = dataColumn.map(_._1).distinct.count().toInt
-        val nInstances = dataColumn.filter({case (k, v) => k == nFeatures}).count()
+        val nInstances = columnarData.count() / nAllFeatures
 
-        require(nToSelect < nFeatures)        
+        require(nToSelect < nAllFeatures)        
         val selected = criterionFactory.getCriterion match {
           //case _: InfoThCriterion with Bound if poolSize != 0 =>
           //  selectFeaturesWithPool(byteData, nToSelect, poolSize)
           case _: InfoThCriterion =>
-            selectFeaturesWithoutPool(dataColumn, nToSelect, nFeatures, nInstances)
+            selectFeaturesWithoutPool(columnarData, nToSelect, nAllFeatures, nInstances)
         }
       
-        dataColumn.unpersist()
+        columnarData.unpersist()
       
         // Print best features according to the mRMR measure
         val out = selected.map{case F(feat, rel) => feat + "\t" + "%.4f".format(rel)}.mkString("\n")

@@ -17,7 +17,10 @@
 
 package org.apache.spark.mllib.feature
 
-import breeze.linalg.{DenseVector => BDV, SparseVector => BSV, Vector => BV}
+import breeze.linalg._
+import breeze.numerics._
+import breeze.linalg.{DenseVector => BDV, SparseVector => BSV, Vector => BV, DenseMatrix => BDM}
+
 import org.apache.spark.rdd.RDD
 import org.apache.spark.SparkContext._
 import org.apache.spark.mllib.regression.LabeledPoint
@@ -37,7 +40,8 @@ object InfoTheory {
   private var joints: RDD[(Int, (Map[(Byte, Byte), Long]))] = null  
   private var classCol: Seq[Byte] = null
   private var classHist: Array[Long] = null
-  private var jointHist: RDD[(Int, Array[Array[Long]])] = null
+  private var jointHist: RDD[(Int, BDM[Long])] = null
+  private val maxValues: Int = 256
   
   /**
    * Calculate entropy for the given frequencies.
@@ -84,13 +88,13 @@ object InfoTheory {
    * @param data RDD of data (first element is the class attribute)
    * @param varX Indexes of primary variables (must be disjoint with Y and Z)
    * @param varY Indexes of secondary variable (must be disjoint with X and Z)
-   * @param varZ Indexes of conditional variable (must be disjoint  with X and Y)
-   * @param n    Number of instances
-   * @return     RDD of (primary var, (MI, CMI))
+   * @param nInstances    Number of instances
+   * @param nFeatures Number of features (including output ones)
+   * @return  RDD of (primary var, (MI, CMI))
    * 
    */
   def computeMI(
-      rawData: RDD[(Int, Byte)],
+      rawData: RDD[(Long, Byte)],
       varX: Seq[Int],
       varY: Int,
       nInstances: Long,      
@@ -101,87 +105,80 @@ object InfoTheory {
 
     // Broadcast variables
     val sc = rawData.context
+    // A boolean vector that shows that X variables are involved on this computation
     val fselected = Array.ofDim[Boolean](nFeatures + 1)
     fselected(nFeatures) = true 
     varX.map(fselected(_) = true)
-    val bFeatSelected = sc.broadcast(fselected)
-    
-    val data = rawData.filter({ case (k, _) => bFeatSelected.value(k)})
-    
-    // Common function to generate pairs, it choose between sparse and dense processing 
-    val elemByPart = (nInstances / data.partitions.size).toInt
-    val auxCol = if(varY == nFeatures){
-      classCol = data.lookup(varY)
+    val bFeatSelected = sc.broadcast(fselected)    
+    val data = rawData.filter({ case (k, _) => bFeatSelected.value((k / nInstances).toInt)})
+     
+    // Broadcast vector for Y variable
+    val auxCol: Seq[Byte] = if(varY == nFeatures){
+      classCol = data.filter({ case (k, _) => k / nInstances == varY}).values.collect()
       classCol
     }  else {
-      data.lookup(varY)
+      data.filter({ case (k, _) => k / nFeatures == varY}).values.collect()
     }    
     
-    val histograms = computeHistograms(data, auxCol, nInstances, elemByPart)
-      .reduceByKey({ case (m1, m2) =>
-        m1.zip(m2).map({ case (v1, v2) => v1.zip(v2).map({case (val1, val2) => val1 + val2})})
-      }).persist()
+    val histograms = computeHistograms(data, auxCol, nFeatures).cache()
     
     // Get sum by columns for varY
-    val yAcc = histograms.lookup(varY)(0).reduceLeft((r1, r2) => 
-      r1.zip(r2).map({case (v1, v2) => v1 + v2}))
+    val (_ , histY) = histograms.filter({ case (k, _) => k / nFeatures == varY}).first
+    val yAcc = sum(histY(::, *)).toArray
       
     // If y corresponds with output feature, it is saved for CMI computations
     if(varY == nFeatures) {
-      classHist = yAcc 
+      classHist = yAcc.toArray // Best format to serialize
       jointHist = histograms
     }
 
-    val miValues = computeInfoGain(histograms, yAcc, nInstances)
+    val miValues = computeMutualInfo(histograms, yAcc, nInstances)
     histograms.unpersist()
     
     miValues
   }
   
   private def computeHistograms(
-    data: RDD[(Int, Byte)],
+    data: RDD[(Long, Byte)],
     auxCol: Seq[Byte],
-    nInstances: Long,
-    elemByPart: Int) = {
+    nFeatures: Int) = {
     
       val bAuxCol = data.context.broadcast(auxCol)
       
-      data.mapPartitionsWithIndex({ (ipart, it) =>
-        var result = Map.empty[Int, Array[Array[Long]]]
-        var offset = 0
+      data.mapPartitions({ it =>
+        val max = 256
+        var result = Map.empty[Int, BDM[Long]]
         for((k, x) <- it) {
-          val hist = result.getOrElse(k, Array.ofDim[Long](256, 256))
-          val inst = (elemByPart * ipart + offset) % nInstances
-          hist(x)(bAuxCol.value(inst.toInt)) += 1
-          result += k -> hist
-          offset += 1
+          val feat = (k / nFeatures).toInt
+          val m = result.getOrElse(feat, BDM.zeros[Long](max, max))
+          val inst = k % nFeatures
+          m(x, bAuxCol.value(inst.toInt)) += 1L
+          result += feat -> m
         }
         result.toIterator
-      })
+      }).reduceByKey(_ + _)
   }
   
-  private def computeInfoGain(
-    data: RDD[(Int, Array[Array[Long]])],
+  private def computeMutualInfo(
+    data: RDD[(Int, BDM[Long])],
     yAcc: Array[Long],
     n: Long) = {
       
-      data.map({ case(k, h) => 
-        val x = Array.ofDim[Long](256)
+      data.mapValues({ m =>
         var mi = 0.0d
-        for(i <- 0 until h.length){
-          x(i) = h(i).sum 
-          val px = x(i).toDouble / n
-          for(j <- 0 until x.length){
-            val pxy = h(i)(j).toDouble / n
+        for(i <- 0 until m.rows){
+          val px = sum(m(i, ::))
+          for(j <- 0 until (m.cols - 1)){
+            val pxy = m(i, j).toDouble / n
             val py = yAcc(j).toDouble / n
             mi += pxy * (math.log(pxy / (px * py)) / math.log(2))
           }
         } 
-        k -> mi        
+        mi        
       })  
   }
   
-  private def getMI(
+ /* private def getMI(
     combinations: RDD[((Int, Byte, Byte, Option[Byte]), Long)],
     n: Long,
     saveProb: Boolean = false) = {
@@ -219,10 +216,10 @@ object InfoTheory {
           (k, (mi, freqx(k), freqxy(k)))
         }*/       
       })      
-  }
+  } */
   
   def computeMIandCMI(
-      data: RDD[(Int, Byte)],
+      data: RDD[(Long, Byte)],
       varX: Seq[Int],
       varY: Int,
       varZ: Int,
@@ -237,29 +234,25 @@ object InfoTheory {
     val bvarX = sc.broadcast(varX)
     
     // Common function to generate pairs, it choose between sparse and dense processing 
-    val elemByPart = (nInstances / data.partitions.size).toInt
-    val auxCol = if(varY == nFeatures){
-      classCol = data.lookup(varY)
+    val auxCol: Seq[Byte] = if(varY == nFeatures){
+      classCol = data.filter({ case (k, _) => k / nFeatures == varY}).values.collect()
       classCol
     }  else {
-      data.lookup(varY)
-    }
+      data.filter({ case (k, _) => k / nFeatures == varY}).values.collect()
+    }    
     
-    val histograms = computeHistograms(data, auxCol, nInstances, elemByPart)
-      .reduceByKey({ case (m1, m2) =>
-        m1.zip(m2).map({ case (v1, v2) => v1.zip(v2).map({case (val1, val2) => val1 + val2})})
-      })
+    val histograms = computeHistograms(data, auxCol, nFeatures)
     
     // Get sum by columns
-    val yAcc = histograms.lookup(varY)(0).reduceLeft((r1, r2) => 
-      r1.zip(r2).map({case (v1, v2) => v1 + v2}))
+    val (_ , histY) = histograms.filter({ case (k, _) => k / nFeatures == varY}).first
+    val yAcc = sum(histY(::, *)).toArray
 
-    computeInfoGain(histograms, yAcc, nInstances)
+    computeMutualInfo(histograms, yAcc, nInstances)
   }
   
 
   
-  private def getCMIandMI(
+  /*private def getCMIandMI(
     combinations: RDD[((Int, Byte, Byte, Option[Byte]), Long)],
     n: Long,
     varY: Int,
@@ -318,7 +311,7 @@ object InfoTheory {
         
         result.toIterator
       })      
-  }
+  } */
   
   class Key1Partitioner(numParts: Int) extends Partitioner {
     override def numPartitions: Int = numParts
