@@ -90,7 +90,7 @@ object InfoTheory {
    * 
    */
   def computeMI(
-      rawData: RDD[((Int, Long), Byte)],
+      rawData: RDD[(Int, Byte)],
       varX: Seq[Int],
       varY: Int,
       nInstances: Long,      
@@ -106,7 +106,7 @@ object InfoTheory {
     varX.map(fselected(_) = true)
     val bFeatSelected = sc.broadcast(fselected)
     
-    val data = rawData.filter({ case ((k, r), _) => bFeatSelected.value(k)})
+    val data = rawData.filter({ case (k, _) => bFeatSelected.value(k)})
     
     // Common function to generate pairs, it choose between sparse and dense processing 
     val elemByPart = (nInstances / data.partitions.size).toInt

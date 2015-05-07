@@ -54,7 +54,7 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
    * 
    */
   private[feature] def selectFeaturesWithoutPool(
-      data: RDD[((Int, Long), Byte)], 
+      data: RDD[(Int, Byte)], 
       nToSelect: Int,
       nFeatures: Int,
       nInstances: Long) = {
@@ -230,9 +230,9 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
         
         //.map({ case ((a, r), v) => (a, v)})
         val dataColumn = temp.sortByKey()
-        //.mapPartitions({ it =>
-        //  for(((a, r), v) <- it) yield (a, v)          
-        //}, preservesPartitioning = true)
+          .mapPartitions({ it =>
+            for(((a, r), v) <- it) yield (a, v)          
+          }, preservesPartitioning = true)
         
         dataColumn.persist(StorageLevel.MEMORY_ONLY_SER)
         
