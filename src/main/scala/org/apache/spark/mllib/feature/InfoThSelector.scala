@@ -216,7 +216,7 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
           case LabeledPoint(label, values: SparseVector) => 
             requireByteValues(label, values)
             new BSV[Byte](0 +: values.indices.map(_ + 1), 
-              label.toByte +: values.values.toArray.map(_.toByte), values.indices.size + 1)
+              label.toByte +: values.values.toArray.map(_.toByte), values.size + 1)
           case LabeledPoint(label, values: DenseVector) => 
             requireByteValues(label, values)
             new BDV[Byte](label.toByte +: values.toArray.map(_.toByte))
