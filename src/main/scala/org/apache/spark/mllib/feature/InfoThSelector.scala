@@ -59,9 +59,9 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
       nFeatures: Int,
       nInstances: Long) = {
     
-    val label = nFeatures
+    val label = nFeatures - 1 
     // calculate relevance
-    val MiAndCmi = IT.computeMI(data, 0 until nFeatures, label, nInstances, nFeatures)
+    val MiAndCmi = IT.computeMI(data, 0 until label, label, nInstances, nFeatures)
     var pool = MiAndCmi.map{case (x, mi) => (x, criterionFactory.getCriterion.init(mi))}
       .collectAsMap()  
     // Print most relevant features
@@ -197,7 +197,7 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
   private[feature] def run(
       data: RDD[LabeledPoint], 
       nToSelect: Int, 
-      poolSize: Int = 30) = {
+      numPartitions: Int) = {
         
         val requireByteValues = (l: Double, v: Vector) => {        
           val values = v match {
@@ -219,16 +219,14 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
           case (LabeledPoint(label, values: SparseVector), r) => 
             requireByteValues(label, values)
             // Not implemented yet!
-            throw new NotImplementedError()
-            val inputs = for(i <- 0 until values.size) yield (r + i, values(i).toByte)
-            val output = Array((r + values.size, label.toByte))
-            inputs ++ output           
+            throw new NotImplementedError()           
           case (LabeledPoint(label, values: DenseVector), r) => 
             requireByteValues(label, values)
-            val inputs = for(i <- 0 until values.size) yield (r + i, values(i).toByte)
-            val output = Array((r + values.size, label.toByte))
+            val rindex = r * nAllFeatures
+            val inputs = for(i <- 0 until values.size) yield (rindex + i, values(i).toByte)
+            val output = Array((rindex + values.size, label.toByte))
             inputs ++ output    
-        }).sortByKey()
+        }).sortByKey() // put numPartitions parameter
         
         columnarData.persist(StorageLevel.MEMORY_AND_DISK_SER)
         
@@ -245,7 +243,7 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
         columnarData.unpersist()
       
         // Print best features according to the mRMR measure
-        val out = selected.map{case F(feat, rel) => feat + "\t" + "%.4f".format(rel)}.mkString("\n")
+        val out = selected.map{case F(feat, rel) => (feat + 1) + "\t" + "%.4f".format(rel)}.mkString("\n")
         println("\n*** mRMR features ***\nFeature\tScore\n" + out)
         // Features must be sorted
         new SelectorModel(selected.map{case F(feat, rel) => feat - 1}.sorted.toArray)
@@ -273,7 +271,7 @@ object InfoThSelector {
       criterionFactory: FT, 
       data: RDD[LabeledPoint],
       nToSelect: Int = 25,
-      poolSize: Int = 0) = {
-    new InfoThSelector(criterionFactory).run(data, nToSelect, poolSize)
+      numPartitions: Int = 500) = {
+    new InfoThSelector(criterionFactory).run(data, nToSelect, numPartitions)
   }
 }
