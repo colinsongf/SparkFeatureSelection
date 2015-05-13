@@ -48,206 +48,108 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
   /**
    * Perform a info-theory selection process without pool optimization.
    * 
-   * @param data Data points (first element is the class attribute).
+   * @param data Columnar data (last element is the class attribute).
    * @param nToSelect Number of features to select.
    * @return A list with the most relevant features and its scores.
    * 
    */
-  private[feature] def selectFeaturesWithoutPool(
+  private[feature] def selectFeatures(
       data: RDD[(Long, Byte)], 
       nToSelect: Int,
-      nFeatures: Int,
-      nInstances: Long) = {
+      nFeatures: Int) = {
     
     val label = nFeatures - 1 
+    val nInstances = data.count() / nFeatures
+    val counterByKey = data.map({ case (k, v) => (k % nFeatures).toInt -> v})
+          .distinct().groupByKey().mapValues(_.max + 1).collectAsMap().toMap
+    
     // calculate relevance
-    val MiAndCmi = IT.computeMI(data, 0 until label, label, nInstances, nFeatures)
+    val MiAndCmi = IT.computeMI(
+        data, 0 until label, label, nInstances, nFeatures, counterByKey)
     var pool = MiAndCmi.map{case (x, mi) => (x, criterionFactory.getCriterion.init(mi))}
       .collectAsMap()  
     // Print most relevant features
     val strRels = MiAndCmi.collect().sortBy(-_._2)
       .take(nToSelect)
-      .map({case (f, mi) => f + "\t" + "%.4f" format mi})
+      .map({case (f, mi) => (f + 1) + "\t" + "%.4f" format mi})
       .mkString("\n")
-    println("\n*** MaxRel features ***\nFeature\tScore\n" + strRels)  
+    println("\n*** MaxRel features ***\nFeature\tScore\n" + strRels) 
+    
     // get maximum and select it
     val firstMax = pool.maxBy(_._2.score)
     var selected = Seq(F(firstMax._1, firstMax._2.score))
     pool = pool - firstMax._1
 
-    /*while (selected.size < nToSelect) {
+    while (selected.size < nToSelect) {
       // update pool
-      val newMiAndCmi = IT.computeCMIandMI(data, pool.keys.toSeq, selected.head.feat, label, 
-        nInstances, nFeatures) 
-        .map({ case (x, crit) => (x, crit) })
-        .collectAsMap()
+      val newMiAndCmi = IT.computeMIandCMI(data, pool.keys.toSeq, selected.head.feat, 
+          label, nInstances, nFeatures, counterByKey) 
+          .map({ case (x, crit) => (x, crit) })
+          .collectAsMap()
       pool.foreach({ case (k, crit) =>
         newMiAndCmi.get(k) match {
           case Some((mi, cmi)) => crit.update(mi, cmi)
-          case None => 
+          case None => /* Never happens */
         }
-      })*/
+      })      
       
-      /*val strRels = pool.toArray.sortBy(-_._2.score)
-      .take(100)
-      .map({case (f, cr) => f + "\t" + "%.4f" format cr.score})
-      .mkString("\n")
-      println("\n*** Partial features ***\nFeature\tScore\n" + strRels) */
-      /*
       // get maximum and save it
       val max = pool.maxBy(_._2.score)
       // select the best feature and remove from the whole set of features
       selected = F(max._1, max._2.score) +: selected
       pool = pool - max._1 
-    }    */
-    selected.reverse
-  }
-   
-   
- /**
-   * Perform a info-theory selection process with pool optimization.
-   * 
-   * @param data Data points (first element is the class attribute).
-   * @param nToSelect Number of features to select.
-   * @param poolSize Initial pool size (also used as pool increment).
-   * @return A list with the most relevant features and its scores.
-   * 
-   */
-/*  private[feature] def selectFeaturesWithPool(data: RDD[LabeledPoint],nToSelect: Int,poolSize: Int) = {
-    
-    val label = 0
-    val nElements = data.count()
-    val nFeatures = data.first().features.size
-    
-    // calculate relevance for all attributes
-    var orderedRels = IT.miAndCmi(data,1 to nFeatures, Seq(label), None, nElements, nFeatures)
-      .collect
-      .map({ case ((k, _), (mi, _)) => (k, mi) })
-      .sortBy(-_._2)
-        
-    // Print most relevant features
-    val strRels = orderedRels.take(nToSelect)
-      .map({case (f, c) => f + "\t" + "%.4f" format c}).mkString("\n")
-    // println("\n*** MaxRel features ***\nFeature\tScore\n" + strRels)
-  
-    // extract initial pool
-    val initialPoolSize = math.min(math.max(poolSize, nToSelect), orderedRels.length)
-    var pool = orderedRels.take(initialPoolSize).map({ case (k, mi) =>
-      (k, criterionFactory.getCriterion.init(mi))
-    })
-    .toMap
-    orderedRels = orderedRels.drop(initialPoolSize)
-
-    // select the best feature (those with the maximum relevance)
-    var max = pool.maxBy(_._2.score)
-    var selected = Seq(F(max._1, max._2.score))
-    pool = pool - max._1
-
-    while (selected.size < nToSelect) {
-      // update pool
-      val newMiAndCmi = IT.miAndCmi(data, pool.keys.toSeq, Seq(selected.head.feat), 
-        Some(label), nElements, nFeatures)
-        .collectAsMap()
-        .map({ case ((x, _), crit) => (x, crit) })
-            
-      pool.foreach({ case (k, crit) => newMiAndCmi.get(k) match {
-          case Some((mi, cmi)) => crit.update(mi, cmi)
-          case None => 
-        }
-      })
-            
-      // look for maximum and bound
-      max = pool.maxBy(_._2.score)
-      var min = pool.minBy(_._2.relevance)._2.asInstanceOf[InfoThCriterion with Bound]
-      
-      // increase pool if necessary
-      while (max._2.score < min.bound && orderedRels.size > 0) {                
-        val realPoolSize = math.min(poolSize, orderedRels.length)        
-        val newFeatures = orderedRels.take(realPoolSize)
-          .map{ case (k, mi) => (k, criterionFactory.getCriterion.init(mi)) }
-          .toMap
-        
-        // Do missed calculations (for each previously selected attribute)
-        val missedMiAndCmi = IT.miAndCmi(data, newFeatures.keys.toSeq, 
-          selected.map(_.feat), Some(label), nElements, nFeatures)
-          .collect()          
-              
-        missedMiAndCmi.foreach{ case ((feat, _), (mi, cmi)) => 
-          newFeatures.get(feat) match {
-            case Some(crit) => crit.update(mi, cmi)
-            case None =>
-          }     
-        }
-        
-        // Add new features to the pool and remove them from the whole set
-        pool ++= newFeatures.toSeq
-        orderedRels = orderedRels.drop(realPoolSize)        
-        // Look for the maximum and the bound
-        max = pool.maxBy(_._2.score)        
-        min = pool.minBy(_._2.relevance)._2.asInstanceOf[InfoThCriterion with Bound]
-      }
-      
-      // select the best feature
-      selected = F(max._1, max._2.score) +: selected
-      pool = pool - max._1
     }
     selected.reverse
-  }  */
+  }
 
   private[feature] def run(
       data: RDD[LabeledPoint], 
       nToSelect: Int, 
       numPartitions: Int) = {
-        
-        val requireByteValues = (l: Double, v: Vector) => {        
-          val values = v match {
-            case SparseVector(size, indices, values) =>
-              values
-            case DenseVector(values) =>
-              values
-          }
-          val condition = (value: Double) => value <= Byte.MaxValue && 
-            value >= Byte.MinValue && value % 1 == 0.0
-          if (!values.forall(condition(_)) || !condition(l)) {
-            throw new SparkException(s"Info-Theoretic Framework requires integer values in range [0, 255]")
-          }
-        }
-        
-        val nAllFeatures = data.first.features.size + 1
-        
-        val columnarData: RDD[(Long, Byte)] = data.zipWithIndex().flatMap ({
-          case (LabeledPoint(label, values: SparseVector), r) => 
-            requireByteValues(label, values)
-            // Not implemented yet!
-            throw new NotImplementedError()           
-          case (LabeledPoint(label, values: DenseVector), r) => 
-            requireByteValues(label, values)
-            val rindex = r * nAllFeatures
-            val inputs = for(i <- 0 until values.size) yield (rindex + i, values(i).toByte)
-            val output = Array((rindex + values.size, label.toByte))
-            inputs ++ output    
-        }).sortByKey() // put numPartitions parameter
-        
-        columnarData.persist(StorageLevel.MEMORY_AND_DISK_SER)
-        
-        val nInstances = columnarData.count() / nAllFeatures
-
-        require(nToSelect < nAllFeatures)        
-        val selected = criterionFactory.getCriterion match {
-          //case _: InfoThCriterion with Bound if poolSize != 0 =>
-          //  selectFeaturesWithPool(byteData, nToSelect, poolSize)
-          case _: InfoThCriterion =>
-            selectFeaturesWithoutPool(columnarData, nToSelect, nAllFeatures, nInstances)
-        }
+    
+    val nPart = if(numPartitions == 0) data.context.getConf.getInt(
+        "spark.default.parallelism", 500) else numPartitions
       
-        columnarData.unpersist()
-      
-        // Print best features according to the mRMR measure
-        val out = selected.map{case F(feat, rel) => (feat + 1) + "\t" + "%.4f".format(rel)}.mkString("\n")
-        println("\n*** mRMR features ***\nFeature\tScore\n" + out)
-        // Features must be sorted
-        new SelectorModel(selected.map{case F(feat, rel) => feat - 1}.sorted.toArray)
+    val requireByteValues = (l: Double, v: Vector) => {        
+      val values = v match {
+        case SparseVector(size, indices, values) =>
+          values
+        case DenseVector(values) =>
+          values
+      }
+      val condition = (value: Double) => value <= Byte.MaxValue && 
+        value >= Byte.MinValue && value % 1 == 0.0
+      if (!values.forall(condition(_)) || !condition(l)) {
+        throw new SparkException(s"Info-Theoretic Framework requires positive values in range [0, 255]")
+      }           
     }
+        
+    val nAllFeatures = data.first.features.size + 1        
+    val columnarData: RDD[(Long, Byte)] = data.zipWithIndex().flatMap ({
+      case (LabeledPoint(label, values: SparseVector), r) => 
+        requireByteValues(label, values)
+        // Not implemented yet!
+        throw new NotImplementedError()           
+      case (LabeledPoint(label, values: DenseVector), r) => 
+        requireByteValues(label, values)
+        val rindex = r * nAllFeatures
+        val inputs = for(i <- 0 until values.size) yield (rindex + i, values(i).toByte)
+        val output = Array((rindex + values.size, label.toByte))
+        inputs ++ output    
+    }).sortByKey(numPartitions = nPart) // put numPartitions parameter        
+    columnarData.persist(StorageLevel.MEMORY_AND_DISK_SER)  
+        
+    require(nToSelect < nAllFeatures)        
+    val selected = selectFeatures(columnarData, nToSelect, nAllFeatures)
+          
+    columnarData.unpersist()
+  
+    // Print best features according to the mRMR measure
+    val out = selected.map{case F(feat, rel) => (feat + 1) + "\t" + "%.4f".format(rel)}.mkString("\n")
+    println("\n*** mRMR features ***\nFeature\tScore\n" + out)
+    // Features must be sorted
+    new SelectorModel(selected.map{case F(feat, rel) => feat}.sorted.toArray)
+  }
 }
 
 object InfoThSelector {
@@ -259,7 +161,7 @@ object InfoThSelector {
    * @param   criterionFactory Initialized criterion to use in this selector
    * @param   data RDD of LabeledPoint (discrete data as integers in range [0, 255]).
    * @param   nToSelect maximum number of features to select
-   * @param   poolSize number of features to be used in pool optimization.
+   * @param   numPartitions number of partitions to structure the data.
    * @return  A feature selection model which contains a subset of selected features
    * 
    * Note: LabeledPoint data must be integer values in double representation 
@@ -271,7 +173,7 @@ object InfoThSelector {
       criterionFactory: FT, 
       data: RDD[LabeledPoint],
       nToSelect: Int = 25,
-      numPartitions: Int = 500) = {
+      numPartitions: Int = 0) = {
     new InfoThSelector(criterionFactory).run(data, nToSelect, numPartitions)
   }
 }
