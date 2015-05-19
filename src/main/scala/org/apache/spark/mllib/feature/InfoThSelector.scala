@@ -20,9 +20,9 @@ package org.apache.spark.mllib.feature
 
 import breeze.linalg.{DenseVector => BDV, SparseVector => BSV, Vector => BV}
 
+import scala.collection.immutable.TreeMap
 import org.apache.spark.SparkContext._
 import org.apache.spark.rdd.RDD
-import org.apache.spark.HashPartitioner
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.SparkException
 import org.apache.spark.storage.StorageLevel
@@ -44,6 +44,9 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
   private type Pool = RDD[(Int, InfoThCriterion)]
   // Case class for criterions by feature
   protected case class F(feat: Int, crit: Double) 
+  private case class ColumnarData(dense: RDD[(Int, (Int, Array[Byte]))], 
+      sparse: RDD[(Int, TreeMap[Long, Byte])],
+      isDense: Boolean)
 
   /**
    * Perform a info-theory selection process without pool optimization.
@@ -54,22 +57,33 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
    * 
    */
   private[feature] def selectFeatures(
-      data: RDD[(Long, Byte)], 
+      data: ColumnarData, 
       nToSelect: Int,
+      nInstances: Long,
       nFeatures: Int) = {
     
-    val label = nFeatures - 1 
-    val nInstances = data.count() / nFeatures
-    val counterByKey = data.map({ case (k, v) => (k % nFeatures).toInt -> v})
-          .distinct().groupByKey().mapValues(_.max + 1).collectAsMap().toMap
-    
-    // calculate relevance
-    val MiAndCmi = IT.computeMI(
-        data, 0 until label, label, nInstances, nFeatures, counterByKey)
-    var pool = MiAndCmi.map{case (x, mi) => (x, criterionFactory.getCriterion.init(mi))}
+    val label = nFeatures - 1
+    val (distinctByFeat, relevances) = {
+      val counterByKey = data.dense.mapValues({ case (_, v) => v.max + 1})
+        .reduceByKey((m1, m2) => if(m1 > m2) m1 else m2).collectAsMap().toMap
+      // calculate relevance
+      val MiAndCmi = IT.computeMI(
+        data.dense, 0 until label, label, nInstances, nFeatures, counterByKey)
+      (counterByKey, MiAndCmi)
+    }
+    //} else {
+      //val nInstances = data.sparse.count() / nFeatures
+      //val counterByKey: Map[Int, Int] = null
+      // calculate relevance
+      //val MiAndCmi = IT.computeMI(
+      //  data.dense, 0 until label, label, nInstances, nFeatures, counterByKey)
+      //(0, counterByKey, MiAndCmi)
+    //}    
+
+    var pool = relevances.map{case (x, mi) => (x, criterionFactory.getCriterion.init(mi))}
       .collectAsMap()  
     // Print most relevant features
-    val strRels = MiAndCmi.collect().sortBy(-_._2)
+    val strRels = relevances.collect().sortBy(-_._2)
       .take(nToSelect)
       .map({case (f, mi) => (f + 1) + "\t" + "%.4f" format mi})
       .mkString("\n")
@@ -82,8 +96,8 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
 
     while (selected.size < nToSelect) {
       // update pool
-      val newMiAndCmi = IT.computeMIandCMI(data, pool.keys.toSeq, selected.head.feat, 
-          label, nInstances, nFeatures, counterByKey) 
+      val newMiAndCmi = IT.computeMIandCMI(data.dense, pool.keys.toSeq, selected.head.feat, 
+          label, nInstances, nFeatures, distinctByFeat) 
           .map({ case (x, crit) => (x, crit) })
           .collectAsMap()
       pool.foreach({ case (k, crit) =>
@@ -105,17 +119,14 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
   private[feature] def run(
       data: RDD[LabeledPoint], 
       nToSelect: Int, 
-      numPartitions: Int) = {
-    
-    val nPart = if(numPartitions == 0) data.context.getConf.getInt(
-        "spark.default.parallelism", 500) else numPartitions
+      numPartitions: Int) = {   
       
     val requireByteValues = (l: Double, v: Vector) => {        
       val values = v match {
-        case SparseVector(size, indices, values) =>
-          values
-        case DenseVector(values) =>
-          values
+        case sv: SparseVector =>
+          sv.values
+        case dv: DenseVector =>
+          dv.values
       }
       val condition = (value: Double) => value <= Byte.MaxValue && 
         value >= Byte.MinValue && value % 1 == 0.0
@@ -124,25 +135,58 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
       }           
     }
         
-    val nAllFeatures = data.first.features.size + 1        
-    val columnarData: RDD[(Long, Byte)] = data.zipWithIndex().flatMap ({
-      case (LabeledPoint(label, values: SparseVector), r) => 
-        requireByteValues(label, values)
-        // Not implemented yet!
-        throw new NotImplementedError()           
-      case (LabeledPoint(label, values: DenseVector), r) => 
-        requireByteValues(label, values)
-        val rindex = r * nAllFeatures
-        val inputs = for(i <- 0 until values.size) yield (rindex + i, values(i).toByte)
-        val output = Array((rindex + values.size, label.toByte))
-        inputs ++ output    
-    }).sortByKey(numPartitions = nPart) // put numPartitions parameter        
-    columnarData.persist(StorageLevel.MEMORY_AND_DISK_SER)  
-        
-    require(nToSelect < nAllFeatures)        
-    val selected = selectFeatures(columnarData, nToSelect, nAllFeatures)
+    val features = data.first.features
+    val nAllFeatures = features.size + 1
+    val dense = features.isInstanceOf[DenseVector]
+    val nPart = if(numPartitions == 0) nAllFeatures else numPartitions
+    var nInstances = 0; var nFeatures = 0
+    
+    val colData = if(dense) {
+      val columnarData: RDD[(Int, (Int, Array[Byte]))] = data.mapPartitionsWithIndex({ (index, it) =>
+        val data = it.toArray
+        val nfeat = data(0).features.size + 1
+        val mat = Array.ofDim[Byte](nfeat, data.length)
+        var j = 0
+        for(reg <- data) {
+          requireByteValues(reg.label, reg.features)
+          for(i <- 0 until reg.features.size) mat(i)(j) = reg.features(i).toByte
+          mat(reg.features.size)(j) = reg.label.toByte
+          j += 1
+        }
+        val chunks = for(i <- 0 until nfeat) yield (i -> (index, mat(i)))
+        chunks.toIterator
+      })      
+      
+      val denseData = columnarData.sortByKey(numPartitions = nPart).persist(StorageLevel.MEMORY_ONLY)  
+      val str = columnarData.first()._2
+      println("First raw: " + str._1 + " " + str._2.mkString(","))
+      //val c = columnarData.count()
+      //val denseData = columnarData.sortByKey(numPartitions = nPart) // put numPartitions parameter      
+      nInstances = columnarData.lookup(0).map(_._2.length).reduce(_ + _)
+      
+      ColumnarData(columnarData, null, true)      
+    } else {
+      val sparseData = data.zipWithUniqueId().flatMap ({
+        case (LabeledPoint(label, values: SparseVector), r) => 
+          requireByteValues(label, values)
+          val inputs = for(i <- values.indices) yield (i, (r, values(i).toByte))
+          val output = Array((values.size, (r, label.toByte)))
+          output ++ inputs     
+      }).groupByKey(numPartitions = nPart)
+      .mapValues(a => TreeMap(a.toArray:_*))
+      .persist(StorageLevel.MEMORY_ONLY)
+      ColumnarData(null, sparseData, false)
+    }
+    
+    require(nToSelect < nAllFeatures)  
+    
+    val selected = selectFeatures(colData, nToSelect, nInstances, nAllFeatures)
           
-    columnarData.unpersist()
+    if(dense) {
+      colData.dense.unpersist()
+    } else {
+      colData.sparse.unpersist()
+    }
   
     // Print best features according to the mRMR measure
     val out = selected.map{case F(feat, rel) => (feat + 1) + "\t" + "%.4f".format(rel)}.mkString("\n")

@@ -34,7 +34,7 @@ import org.apache.spark.SparkException
  */
 object InfoTheory {
   
-  private var classCol: Array[Byte] = null
+  private var classCol: Array[Array[Byte]] = null
   private var marginalProb: RDD[(Int, BDV[Float])] = null
   private var jointProb: RDD[(Int, BDM[Float])] = null
   
@@ -73,7 +73,7 @@ object InfoTheory {
    * 
    */
   def computeMI(
-      rawData: RDD[(Long, Byte)],
+      rawData: RDD[(Int, (Int, Array[Byte]))],
       varX: Seq[Int],
       varY: Int,
       nInstances: Long,      
@@ -91,20 +91,25 @@ object InfoTheory {
     fselected(varY) = true // output feature
     varX.map(fselected(_) = true)
     val bFeatSelected = sc.broadcast(fselected)
-    val getFeat = (k: Long) => (k % nFeatures).toInt
     // Filter data by these variables
-    val data = rawData.filter({ case (k, _) => bFeatSelected.value(getFeat(k))})
+    val data = rawData.filter({ case (k, _) => bFeatSelected.value(k)})
+    
+    println("First row: " + data.first._2.toString())
+    println("Counter counter value:  " + counter.toString())
      
     // Broadcast Y vector
-    val yCol: Array[Byte] = if(varY == label){
-	    // classCol corresponds with output attribute, which is re-used in the iteration 
-      classCol = data.filter({ case (k, _) => getFeat(k) == varY}).values.collect()
-      classCol
-    }  else {
-      data.filter({ case (k, _) => getFeat(k) == varY}).values.collect()
-    }    
+    val yvals = data.lookup(varY)
+    var ycol = Array.ofDim[Array[Byte]](yvals.length)
+    yvals.foreach({ case (b, v) => ycol(b) = v })    
     
-    val histograms = computeHistograms(data, (varY, yCol), nFeatures, counter)
+    val str = ycol.map(_.mkString(",")).mkString("\n")
+    
+    println("ycol :" + str)
+    
+    // classCol corresponds with output attribute, which is re-used in the iteration
+    if(varY == label) classCol = ycol
+    
+    val histograms = computeHistograms(data, (varY, ycol), nFeatures, counter)
     val jointTable = histograms.mapValues(_.map(_.toFloat / nInstances))
     val marginalTable = jointTable.mapValues(h => sum(h(*, ::)).toDenseVector)
       
@@ -121,23 +126,23 @@ object InfoTheory {
   }
   
   private def computeHistograms(
-      data: RDD[(Long, Byte)],
-      yCol: (Int, Array[Byte]),
+      data:  RDD[(Int, (Int, Array[Byte]))],
+      ycol: (Int, Array[Array[Byte]]),
       nFeatures: Long,
       counter: Map[Int, Int]) = {
     
     val maxSize = 256 
-    val byCol = data.context.broadcast(yCol._2)    
+    val bycol = data.context.broadcast(ycol._2)    
     val bCounter = data.context.broadcast(counter) 
-    val ys = counter.getOrElse(yCol._1, maxSize).toInt
+    val ys = counter.getOrElse(ycol._1, maxSize).toInt
       
     data.mapPartitions({ it =>
       var result = Map.empty[Int, BDM[Long]]
-      for((k, x) <- it) {
-        val feat = (k % nFeatures).toInt; val inst = (k / nFeatures).toInt
+      for((feat, (block, arr)) <- it) {
         val xs = bCounter.value.getOrElse(feat, maxSize).toInt
-        val m = result.getOrElse(feat, BDM.zeros[Long](xs, ys))        
-        m(x, byCol.value(inst)) += 1
+        val m = result.getOrElse(feat, BDM.zeros[Long](xs, ys)) 
+        for(i <- 0 until arr.length) 
+          m(arr(i), bycol.value(block)(i)) += 1
         result += feat -> m
       }
       result.toIterator
@@ -167,7 +172,7 @@ object InfoTheory {
   }
   
   def computeMIandCMI(
-      rawData: RDD[(Long, Byte)],
+      rawData: RDD[(Int, (Int, Array[Byte]))],
       varX: Seq[Int],
       varY: Int,
       varZ: Int,
@@ -186,19 +191,21 @@ object InfoTheory {
     fselected(varY) = true; fselected(varZ) = true
     varX.map(fselected(_) = true)
     val bFeatSelected = sc.broadcast(fselected)
-    val getFeat = (k: Long) => (k % nFeatures).toInt
     // Filter data by these variables
-    val data = rawData.filter({ case (k, _) => bFeatSelected.value(getFeat(k))})
+    val data = rawData.filter({ case (k, _) => bFeatSelected.value(k)})
      
-    // Broadcast Y and Z vector
-	  val yCol = data.filter({ case (k, _) => getFeat(k) == varY}).values.collect()
-	  val zCol = if(classCol != null) classCol else throw new SparkException(
+    // Prepare Y and Z vector
+    val yvals = data.lookup(varY)
+	  val ycol = Array.ofDim[Array[Byte]](yvals.length)
+    yvals.foreach({ case (b, v) => ycol(b) = v })
+    
+	  val zcol = if(classCol != null) classCol else throw new SparkException(
         "Output column must be computed and cached.")    
     
     // Compute conditional histograms for all variables
     // Then, we remove those not present in X set
 	  val histograms3d = computeConditionalHistograms(
-        data, (varY, yCol), (varZ, zCol), nFeatures, counter)
+        data, (varY, ycol), (varZ, zcol), nFeatures, counter)
         .filter{case (k, _) => k != varZ && k != varY}
     
     // Compute CMI and MI for all X variables
@@ -206,27 +213,29 @@ object InfoTheory {
  }
 
   private def computeConditionalHistograms(
-    data: RDD[(Long, Byte)],
-    yCol: (Int, Array[Byte]),
-    zCol: (Int, Array[Byte]),
+    data: RDD[(Int, (Int, Array[Byte]))],
+    ycol: (Int, Array[Array[Byte]]),
+    zcol: (Int, Array[Array[Byte]]),
     nFeatures: Long,
     counter: Map[Int, Int]) = {
     
-      val byCol = data.context.broadcast(yCol._2)
-      val bzCol = data.context.broadcast(zCol._2)
+      val bycol = data.context.broadcast(ycol._2)
+      val bzcol = data.context.broadcast(zcol._2)
       val bCounter = data.context.broadcast(counter)
-      val ys = counter.getOrElse(yCol._1, 256)
-      val zs = counter.getOrElse(zCol._1, 256)
+      val ys = counter.getOrElse(ycol._1, 256)
+      val zs = counter.getOrElse(zcol._1, 256)
       
       data.mapPartitions({ it =>
         var result = Map.empty[Int, BDV[BDM[Long]]]
-        for((k, x) <- it) {
-          val feat = (k % nFeatures).toInt; val inst = (k / nFeatures).toInt
+        for((feat, (block, arr)) <- it) {
           val xs = bCounter.value.getOrElse(feat, 256)
           // We create a vector (z) of matrices (x,y) to represent a 3-dim matrix
           val m = result.getOrElse(feat, BDV.fill[BDM[Long]](zs){BDM.zeros[Long](xs, ys)})
-          val y = byCol.value(inst); val z = bzCol.value(inst)
-          m(z)(x, y) += 1
+          for(i <- 0 until arr.length){
+            val y = bycol.value(block)(i)
+            val z = bzcol.value(block)(i)
+            m(z)(arr(i), y) += 1
+          }
           result += feat -> m
         }
         result.toIterator
