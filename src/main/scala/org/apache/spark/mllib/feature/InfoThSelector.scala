@@ -157,12 +157,8 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
         chunks.toIterator
       })      
       
-      val denseData = columnarData.sortByKey(numPartitions = nPart).persist(StorageLevel.MEMORY_ONLY)  
-      val str = columnarData.first()._2
-      println("First raw: " + str._1 + " " + str._2.mkString(","))
-      //val c = columnarData.count()
-      //val denseData = columnarData.sortByKey(numPartitions = nPart) // put numPartitions parameter      
-      nInstances = columnarData.lookup(0).map(_._2.length).reduce(_ + _)
+      val denseData = columnarData.sortByKey(numPartitions = nPart).persist(StorageLevel.MEMORY_ONLY)     
+      nInstances = denseData.lookup(0).map(_._2.length).reduce(_ + _)
       
       ColumnarData(columnarData, null, true)      
     } else {

@@ -93,18 +93,11 @@ object InfoTheory {
     val bFeatSelected = sc.broadcast(fselected)
     // Filter data by these variables
     val data = rawData.filter({ case (k, _) => bFeatSelected.value(k)})
-    
-    println("First row: " + data.first._2.toString())
-    println("Counter counter value:  " + counter.toString())
      
     // Broadcast Y vector
     val yvals = data.lookup(varY)
     var ycol = Array.ofDim[Array[Byte]](yvals.length)
-    yvals.foreach({ case (b, v) => ycol(b) = v })    
-    
-    val str = ycol.map(_.mkString(",")).mkString("\n")
-    
-    println("ycol :" + str)
+    yvals.foreach({ case (b, v) => ycol(b) = v })
     
     // classCol corresponds with output attribute, which is re-used in the iteration
     if(varY == label) classCol = ycol
