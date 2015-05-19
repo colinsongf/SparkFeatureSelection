@@ -167,12 +167,9 @@ object MLExperimentUtils {
 				
 			} catch {
 				case iie: org.apache.hadoop.mapred.InvalidInputException =>
-          train.persist(StorageLevel.MEMORY_ONLY_SER)
-          val nInstances = train.count() // to persist train and not to affect time measurements
 					val initStartTime = System.nanoTime()
 					val discAlgorithm = discretize(train)
-					val discTime = (System.nanoTime() - initStartTime) / 1e9
-          train.unpersist()
+					val discTime = (System.nanoTime() - initStartTime) / 1e9          
           
           // More efficient than by-instance version
           val discData = discAlgorithm.transform(train.map(_.features))
@@ -181,6 +178,7 @@ object MLExperimentUtils {
           val discTestData = discAlgorithm.transform(test.map(_.features))
             .zip(test.map(_.label))
             .map{case (v, l) => LabeledPoint(l, v)}
+          
 		          
           // Save discretized data 
           if(save) {
@@ -294,14 +292,13 @@ object MLExperimentUtils {
 				(traValuesAndPreds, tstValuesAndPreds, classifficationTime)
 			} catch {
 				case iie: org.apache.hadoop.mapred.InvalidInputException => 
-          train.persist(StorageLevel.MEMORY_ONLY_SER)
-          val nInstances = train.count() // to persist train and not to affect time measurements
+          val ctrain = train.cache()
+          val nInstances = ctrain.count() // to persist train and not to affect time measurements
 					val initStartTime = System.nanoTime()	
-					val classificationModel = classify(train)
+					val classificationModel = classify(ctrain)
 					val classificationTime = (System.nanoTime() - initStartTime) / 1e9
-          train.unpersist()
 					
-					val traValuesAndPreds = computePredictions(classificationModel, train)
+					val traValuesAndPreds = computePredictions(classificationModel, ctrain)
 					val tstValuesAndPreds = computePredictions(classificationModel, test)
 					
 					// Print training fold results
@@ -314,6 +311,8 @@ object MLExperimentUtils {
 					outputTest.saveAsTextFile(outputDir + "/result_" + iteration + ".tst")		
 					val strTime = sc.parallelize(Array(classificationTime.toString), 1)
 					strTime.saveAsTextFile(outputDir + "/classification_time_" + iteration)
+          
+          ctrain.unpersist()
 					
 					(traValuesAndPreds, tstValuesAndPreds, classificationTime)
 			}
@@ -372,7 +371,7 @@ object MLExperimentUtils {
 		              val bcTypeConv = sc.broadcast(typeConversion)
 		              val lines = sc.textFile(filePath: String)
 		              val data = if(samplingRate < 1.0) lines.sample(false, samplingRate) else lines
-		              data.map(line => KeelParser.parseLabeledPoint(bcTypeConv.value, line))              
+		              data.map(line => KeelParser.parseLabeledPoint(bcTypeConv.value, line))         
 		           }
 		      }      
       
@@ -403,7 +402,6 @@ object MLExperimentUtils {
 					trData = discTrData
 					tstData = discTstData
 					taskTime = discTime
-          trData.unpersist()
 				  case _ => /* criteria not fulfilled, do not discretize */
 				}				
 				times("DiscTime") = times("DiscTime") :+ taskTime         
