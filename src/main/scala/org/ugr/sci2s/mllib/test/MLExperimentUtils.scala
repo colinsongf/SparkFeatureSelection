@@ -238,9 +238,12 @@ object MLExperimentUtils {
 			} catch {
 				case iie: org.apache.hadoop.mapred.InvalidInputException =>
 					val initStartTime = System.nanoTime()
-					val featureSelector = fs(train)
+          val fstrain = train.cache()
+          val c = fstrain.count()
+          
+					val featureSelector = fs(fstrain)
 					val FSTime = (System.nanoTime() - initStartTime) / 1e9
-          val redTrain = train.map(i => LabeledPoint(i.label, featureSelector.transform(i.features)))
+          val redTrain = fstrain.map(i => LabeledPoint(i.label, featureSelector.transform(i.features)))
           val redTest = test.map(i => LabeledPoint(i.label, featureSelector.transform(i.features)))
           
           // Save reduced data 
@@ -259,6 +262,8 @@ object MLExperimentUtils {
 					parFSscheme.saveAsTextFile(outputDir + "/FSscheme_" + iteration)
 					val strTime = sc.parallelize(Array(FSTime.toString), 1)
 					strTime.saveAsTextFile(outputDir + "/fs_time_" + iteration)
+          
+          fstrain.unpersist()
 					
 					(redTrain, redTest, FSTime)
 			}
