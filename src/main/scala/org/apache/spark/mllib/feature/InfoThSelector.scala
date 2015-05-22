@@ -18,8 +18,6 @@
 package org.apache.spark.mllib.feature
 
 
-import breeze.linalg.{DenseVector => BDV, SparseVector => BSV, Vector => BV}
-
 import scala.collection.immutable.TreeMap
 import org.apache.spark.SparkContext._
 import org.apache.spark.rdd.RDD
@@ -28,8 +26,10 @@ import org.apache.spark.SparkException
 import org.apache.spark.storage.StorageLevel
 import org.apache.spark.mllib.linalg.{Vector, DenseVector, SparseVector}
 import org.apache.spark.annotation.Experimental
+import org.apache.spark.Logging
 import org.apache.spark.mllib.feature.{InfoThCriterionFactory => FT}
 import org.apache.spark.mllib.feature.{InfoTheory => IT}
+import scala.collection.immutable.HashMap
 
 /**
  * Train a info-theory feature selection model according to a criterion.
@@ -38,14 +38,14 @@ import org.apache.spark.mllib.feature.{InfoTheory => IT}
  * @param data RDD of LabeledPoint (discrete data).
  * 
  */
-class InfoThSelector private[feature] (val criterionFactory: FT) extends Serializable {
+class InfoThSelector private[feature] (val criterionFactory: FT) extends Serializable with Logging {
 
   // Pool of criterions
   private type Pool = RDD[(Int, InfoThCriterion)]
   // Case class for criterions by feature
   protected case class F(feat: Int, crit: Double) 
   private case class ColumnarData(dense: RDD[(Int, (Int, Array[Byte]))], 
-      sparse: RDD[(Int, TreeMap[Long, Byte])],
+      sparse: RDD[(Int, HashMap[Long, Byte])],
       isDense: Boolean)
 
   /**
@@ -63,22 +63,22 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
       nFeatures: Int) = {
     
     val label = nFeatures - 1
-    val (distinctByFeat, relevances) = {
+    val (distinctByFeat, relevances) = if(data.isDense) {
       val counterByKey = data.dense.mapValues({ case (_, v) => v.max + 1})
         .reduceByKey((m1, m2) => if(m1 > m2) m1 else m2).collectAsMap().toMap
       // calculate relevance
       val MiAndCmi = IT.computeMI(
         data.dense, 0 until label, label, nInstances, nFeatures, counterByKey)
       (counterByKey, MiAndCmi)
-    }
-    //} else {
+    } else {
       //val nInstances = data.sparse.count() / nFeatures
-      //val counterByKey: Map[Int, Int] = null
+      val counterByKey: Map[Int, Int] = data.sparse.mapValues(tree => tree(tree.max._1) + 1)
+        .collectAsMap().toMap
       // calculate relevance
-      //val MiAndCmi = IT.computeMI(
-      //  data.dense, 0 until label, label, nInstances, nFeatures, counterByKey)
-      //(0, counterByKey, MiAndCmi)
-    //}    
+      val MiAndCmi = IT.computeMISparse(
+        data.sparse, 0 until label, label, nInstances, nFeatures, counterByKey)
+      (counterByKey, MiAndCmi)
+    }    
 
     var pool = relevances.map{case (x, mi) => (x, criterionFactory.getCriterion.init(mi))}
       .collectAsMap()  
@@ -96,12 +96,16 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
 
     while (selected.size < nToSelect) {
       // update pool
-      val newMiAndCmi = IT.computeMIandCMI(data.dense, pool.keys.toSeq, selected.head.feat, 
-          label, nInstances, nFeatures, distinctByFeat) 
-          .map({ case (x, crit) => (x, crit) })
-          .collectAsMap()
+      val redundancies = if(data.isDense) {
+        IT.computeMIandCMI(data.dense, pool.keys.toSeq, selected.head.feat, 
+          label, nInstances, nFeatures, distinctByFeat).collectAsMap()
+      } else {
+        IT.computeMIandCMI(data.dense, pool.keys.toSeq, selected.head.feat, 
+          label, nInstances, nFeatures, distinctByFeat).collectAsMap()
+      }
+
       pool.foreach({ case (k, crit) =>
-        newMiAndCmi.get(k) match {
+        redundancies.get(k) match {
           case Some((mi, cmi)) => crit.update(mi, cmi)
           case None => /* Never happens */
         }
@@ -119,7 +123,12 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
   private[feature] def run(
       data: RDD[LabeledPoint], 
       nToSelect: Int, 
-      numPartitions: Int) = {   
+      numPartitions: Int) = {  
+    
+    if (data.getStorageLevel == StorageLevel.NONE) {
+      logWarning("The input data is not directly cached, which may hurt performance if its"
+        + " parent RDDs are also uncached.")
+    }
       
     val requireByteValues = (l: Double, v: Vector) => {        
       val values = v match {
@@ -139,7 +148,11 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
     val nAllFeatures = features.size + 1
     val dense = features.isInstanceOf[DenseVector]
     val nPart = if(numPartitions == 0) nAllFeatures else numPartitions
-    var nInstances = 0; var nFeatures = 0
+    if(nPart > nAllFeatures) {
+      logWarning("Number of partitions should be less than the number of features in the dataset."
+        + " At least, less than 2x nPartitions.")
+    }
+    var nInstances = 0L
     
     val colData = if(dense) {
       val columnarData: RDD[(Int, (Int, Array[Byte]))] = data.mapPartitionsWithIndex({ (index, it) =>
@@ -156,21 +169,38 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
         val chunks = for(i <- 0 until nfeat) yield (i -> (index, mat(i)))
         chunks.toIterator
       })      
+      // Sort to group all chunks for the same feature closely. It will avoid to shuffle too much histograms
+      val denseData = columnarData.sortByKey(numPartitions = nPart).persist(StorageLevel.MEMORY_ONLY)
+      val c = denseData.count() // Important to cache the data!
+      println("Number of chunks: " + c)
       
-      val denseData = columnarData.sortByKey(numPartitions = nPart).persist(StorageLevel.MEMORY_ONLY)     
       nInstances = denseData.lookup(0).map(_._2.length).reduce(_ + _)
-      
-      ColumnarData(columnarData, null, true)      
+      ColumnarData(denseData, null, true)      
     } else {
-      val sparseData = data.zipWithUniqueId().flatMap ({
-        case (LabeledPoint(label, values: SparseVector), r) => 
-          requireByteValues(label, values)
-          val inputs = for(i <- values.indices) yield (i, (r, values(i).toByte))
-          val output = Array((values.size, (r, label.toByte)))
-          output ++ inputs     
-      }).groupByKey(numPartitions = nPart)
-      .mapValues(a => TreeMap(a.toArray:_*))
-      .persist(StorageLevel.MEMORY_ONLY)
+      val sparseData = data.zipWithUniqueId().mapPartitions ({ it =>
+        var featCols = HashMap[Int, HashMap[Long, Byte]]()
+        for ((lp, inst) <- it) {
+          requireByteValues(lp.label, lp.features)
+          val ilabel = nAllFeatures
+          var yvals = featCols.getOrElse(ilabel, HashMap.empty[Long, Byte])
+          yvals += inst -> lp.label.toByte
+          featCols += ilabel -> yvals
+          val values = lp.features.asInstanceOf[SparseVector]
+          values.indices.map({ idx =>
+            var yvals = featCols.getOrElse(idx, HashMap.empty[Long, Byte])
+            yvals += inst -> values(idx).toByte
+            featCols += idx -> yvals            
+          })          
+        }
+        featCols.toIterator    
+      }).reduceByKey(_ ++ _).persist(StorageLevel.MEMORY_ONLY)
+      
+      //val sparseData = columnarData
+        //.aggregateByKey(HashMap[Long, Byte]())({case (f, e) => f + e}, _ ++ _)
+        //.persist(StorageLevel.MEMORY_ONLY)        
+      val c = sparseData.count()      
+      nInstances = data.count()
+      
       ColumnarData(null, sparseData, false)
     }
     
@@ -206,7 +236,10 @@ object InfoThSelector {
    * 
    * Note: LabeledPoint data must be integer values in double representation 
    * with a maximum of 256 distinct values. In this manner, data can be transformed
-   * to byte class directly, making the selection process much more efficient. 
+   * to byte class directly, making the selection process much more efficient.
+   * 
+   * Note: numPartitions must be less or equal to the number of features to achieve a better performance.
+   * In this way, the number of histograms to be shuffled is reduced. 
    * 
    */
   def train(

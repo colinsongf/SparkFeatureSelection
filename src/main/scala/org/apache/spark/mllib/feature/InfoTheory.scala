@@ -20,7 +20,6 @@ package org.apache.spark.mllib.feature
 import breeze.linalg._
 import breeze.numerics._
 import breeze.linalg.{DenseVector => BDV, SparseVector => BSV, Vector => BV, DenseMatrix => BDM}
-
 import org.apache.spark.rdd.RDD
 import org.apache.spark.SparkContext._
 import org.apache.spark.mllib.regression.LabeledPoint
@@ -28,6 +27,8 @@ import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.mllib.linalg.DenseVector
 import org.apache.spark.mllib.linalg.SparseVector
 import org.apache.spark.SparkException
+import scala.collection.immutable.TreeMap
+import scala.collection.immutable.HashMap
 
 /**
  * Information Theory function and distributed primitives.
@@ -35,6 +36,7 @@ import org.apache.spark.SparkException
 object InfoTheory {
   
   private var classCol: Array[Array[Byte]] = null
+  private var classColSparse: HashMap[Long, Byte] = null
   private var marginalProb: RDD[(Int, BDV[Float])] = null
   private var jointProb: RDD[(Int, BDM[Float])] = null
   
@@ -59,6 +61,158 @@ object InfoTheory {
   private[feature] def entropy(freqs: Seq[Long]): Double = {
     entropy(freqs, freqs.reduce(_ + _))
   }  
+  
+  /**
+   * Method that calculates mutual information (MI) and conditional mutual information (CMI) 
+   * simultaneously for several variables. Indexes must be disjoint.
+   *
+   * @param data RDD of data (first element is the class attribute)
+   * @param varX Indexes of primary variables (must be disjoint with Y and Z)
+   * @param varY Indexes of secondary variable (must be disjoint with X and Z)
+   * @param nInstances    Number of instances
+   * @param nFeatures Number of features (including output ones)
+   * @return  RDD of (primary var, (MI, CMI))
+   * 
+   */
+  def computeMISparse(
+      rawData: RDD[(Int, HashMap[Long, Byte])],
+      varX: Seq[Int],
+      varY: Int,
+      nInstances: Long,      
+      nFeatures: Int,
+      counter: Map[Int, Int]) = {
+    
+    // Pre-requisites
+    require(varX.size > 0)
+
+    // Broadcast variables
+    val sc = rawData.context
+    val label = nFeatures - 1
+    // A boolean vector that indicates the variables involved on this computation
+    val fselected = Array.ofDim[Boolean](nFeatures)
+    fselected(varY) = true // output feature
+    varX.map(fselected(_) = true)
+    val bFeatSelected = sc.broadcast(fselected)
+    // Filter data by these variables
+    val data = rawData.filter({ case (k, _) => bFeatSelected.value(k)})
+     
+    // Broadcast Y vector
+    val ycol = data.lookup(varY)(0)
+    // classCol corresponds with output attribute, which is re-used in the iteration
+    if(varY == label) classColSparse = ycol
+    
+    val histograms = computeHistogramsSparse(data, (varY, ycol), nInstances, counter)
+    val jointTable = histograms.mapValues(_.map(_.toFloat / nInstances))
+    val marginalTable = jointTable.mapValues(h => sum(h(*, ::)).toDenseVector)
+      
+    // If y corresponds with output feature, we save for CMI computation
+    if(varY == label) {
+      marginalProb = marginalTable.cache()
+      jointProb = jointTable.cache()
+    }
+    
+    val yProb = marginalTable.lookup(varY)(0)
+    // Remove output feature from the computations
+    val fdata = histograms.filter{case (k, _) => k != label}
+    computeMutualInfo(fdata, yProb, nInstances)
+  }
+  
+  private def computeHistogramsSparse(
+      data:  RDD[(Int, HashMap[Long, Byte])],
+      ycol: (Int, HashMap[Long, Byte]),
+      nInstances: Long,
+      counter: Map[Int, Int]) = {
+    
+    val maxSize = 256 
+    val bycol = data.context.broadcast(ycol._2)    
+    val bCounter = data.context.broadcast(counter) 
+    val ys = counter.getOrElse(ycol._1, maxSize).toInt
+      
+    data.mapPartitions({ it =>
+      var result = Map.empty[Int, BDM[Long]]
+      val data = it.toArray
+      (0 until nInstances.toInt).map({ inst =>
+        val yval = bycol.value.getOrElse(inst, 0: Byte)
+        data.map({ case (feat, xcol) =>
+          val mat = result.getOrElse(feat, 
+            BDM.zeros[Long](bCounter.value.getOrElse(feat, maxSize).toInt, ys)) 
+          val xval = xcol.getOrElse(inst, 0: Byte)          
+          mat(xval, yval) += 1
+          result += feat -> mat
+        })
+      })
+      result.toIterator
+    }).reduceByKey(_ + _)
+  }
+  
+  def computeMIandCMISparse(
+      rawData: RDD[(Int, HashMap[Long, Byte])],
+      varX: Seq[Int],
+      varY: Int,
+      varZ: Int,
+      nInstances: Long,      
+      nFeatures: Int,
+      counter: Map[Int, Int]) = {    
+    
+    // Pre-requisites
+    require(varX.size > 0)
+
+    // Broadcast variables
+    val sc = rawData.context
+    val label = nFeatures - 1
+    // A boolean vector that indicates the variables involved on this computation
+    val fselected = Array.ofDim[Boolean](nFeatures)
+    fselected(varY) = true; fselected(varZ) = true
+    varX.map(fselected(_) = true)
+    val bFeatSelected = sc.broadcast(fselected)
+    // Filter data by these variables
+    val data = rawData.filter({ case (k, _) => bFeatSelected.value(k)})
+     
+    // Prepare Y and Z vector
+    val ycol = data.lookup(varY)(0)    
+    val zcol = if(classColSparse != null) classColSparse else throw new SparkException(
+        "Output column must be computed and cached.")    
+    
+    // Compute conditional histograms for all variables
+    // Then, we remove those not present in X set
+    val histograms3d = computeConditionalHistogramsSparse(
+        data, (varY, ycol), (varZ, zcol), nInstances, counter)
+        .filter{case (k, _) => k != varZ && k != varY}
+    
+    // Compute CMI and MI for all X variables
+    computeConditionalMutualInfo(histograms3d, varY, varZ, nInstances)
+ }
+  
+  private def computeConditionalHistogramsSparse(
+    data: RDD[(Int, HashMap[Long, Byte])],
+    ycol: (Int, HashMap[Long, Byte]),
+    zcol: (Int, HashMap[Long, Byte]),
+    nInstances: Long,
+    counter: Map[Int, Int]) = {
+    
+      val bycol = data.context.broadcast(ycol._2)
+      val bzcol = data.context.broadcast(zcol._2)
+      val bCounter = data.context.broadcast(counter)
+      val ys = counter.getOrElse(ycol._1, 256)
+      val zs = counter.getOrElse(zcol._1, 256)
+      
+      data.mapPartitions({ it =>
+        var result = Map.empty[Int, BDV[BDM[Long]]]
+        val data = it.toArray
+        (0 until nInstances.toInt).map({ inst =>      
+          val y = bycol.value.getOrElse(inst, 0: Byte)
+          val z = bzcol.value.getOrElse(inst, 0: Byte)
+          data.map({ case (feat, xcol) =>
+            val m = result.getOrElse(feat, 
+                BDV.fill[BDM[Long]](zs){BDM.zeros[Long](bCounter.value.getOrElse(feat, 256), ys)})
+            val x = xcol.getOrElse(inst, 0: Byte)
+            m(z)(x, y) += 1            
+            result += feat -> m
+          })
+        })
+        result.toIterator
+      }).reduceByKey(_ + _)
+  }
   
   /**
    * Method that calculates mutual information (MI) and conditional mutual information (CMI) 
@@ -132,8 +286,8 @@ object InfoTheory {
     data.mapPartitions({ it =>
       var result = Map.empty[Int, BDM[Long]]
       for((feat, (block, arr)) <- it) {
-        val xs = bCounter.value.getOrElse(feat, maxSize).toInt
-        val m = result.getOrElse(feat, BDM.zeros[Long](xs, ys)) 
+        val m = result.getOrElse(feat, 
+            BDM.zeros[Long](bCounter.value.getOrElse(feat, maxSize).toInt, ys)) 
         for(i <- 0 until arr.length) 
           m(arr(i), bycol.value(block)(i)) += 1
         result += feat -> m
@@ -221,9 +375,9 @@ object InfoTheory {
       data.mapPartitions({ it =>
         var result = Map.empty[Int, BDV[BDM[Long]]]
         for((feat, (block, arr)) <- it) {
-          val xs = bCounter.value.getOrElse(feat, 256)
           // We create a vector (z) of matrices (x,y) to represent a 3-dim matrix
-          val m = result.getOrElse(feat, BDV.fill[BDM[Long]](zs){BDM.zeros[Long](xs, ys)})
+          val m = result.getOrElse(feat, 
+              BDV.fill[BDM[Long]](zs){BDM.zeros[Long](bCounter.value.getOrElse(feat, 256), ys)})
           for(i <- 0 until arr.length){
             val y = bycol.value(block)(i)
             val z = bzcol.value(block)(i)
