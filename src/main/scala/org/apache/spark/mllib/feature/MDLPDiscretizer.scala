@@ -88,10 +88,11 @@ class MDLPDiscretizer private (val data: RDD[LabeledPoint]) extends Serializable
         require(intersect.size == s.size)
         s.toArray
       case None =>        
-        val countFeat = calcRawData.distinct.mapValues(d => 1L).reduceByKey(_ + _)
+        /*val countFeat = calcRawData.distinct.mapValues(d => 1L).reduceByKey(_ + _)
           .filter{case (_, c) => c > maxLimitBins}
         val cvars = countFeat.sortByKey().keys.collect()
-        cvars       
+        cvars */
+        (0 until nFeatures).toArray
     }
   }
   
@@ -419,7 +420,7 @@ class MDLPDiscretizer private (val data: RDD[LabeledPoint]) extends Serializable
           val sv = v.asInstanceOf[SparseVector]
           c(bLabels2Int.value(label)) = 1L
           // BigDecimal(d).setScale(6, BigDecimal.RoundingMode.HALF_UP).toFloat
-          for(i <- 0 until sv.size) yield ((sv.indices(i), sv.values(i).toFloat), c)
+          for(i <- 0 until sv.indices.length) yield ((sv.indices(i), sv.values(i).toFloat), c)
         }
     }
     

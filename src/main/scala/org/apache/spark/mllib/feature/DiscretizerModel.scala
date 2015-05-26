@@ -95,13 +95,13 @@ class DiscretizerModel (val thresholds: Array[(Int, Seq[Float])]) extends Vector
       case v: SparseVector =>
         var newValues = Array.empty[Double]
         var j = 0
-        for (i <- v.indices){
-          val tmpj = bc_thresholds.value.indexWhere({case (idx, _) => i == idx}, j)
+        for (i <- 0 until v.indices.length){
+          val tmpj = bc_thresholds.value.indexWhere({case (idx, _) => v.indices(i) == idx}, j)
           if (tmpj != -1) {
             newValues = assignDiscreteValue(v(i), bc_thresholds.value(tmpj)._2).toDouble +: newValues
             j = tmpj
           } else {                  
-            newValues = v.values(i) +: newValues
+            newValues = v(i) +: newValues
           }
         }
         // the `index` array inside sparse vector object will not be changed,
