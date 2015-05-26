@@ -22,14 +22,24 @@ package org.apache.spark.mllib.feature
  */
 trait InfoThCriterion extends Serializable with Ordered[InfoThCriterion] {
 
-  var relevance: Double = 0.0
+  var relevance: Float = 0.0f
+  var valid: Boolean = true 
 
   /**
    * Protected method to set the relevance.
    * The default value is 0.0.
    */
-  protected def setRelevance(relevance: Double): InfoThCriterion = {
+  protected def setRelevance(relevance: Float): InfoThCriterion = {
     this.relevance = relevance
+    this
+  }
+  
+  /**
+   * Method to set the validity.
+   * The default value is true.
+   */
+  def setValid(valid: Boolean): InfoThCriterion = {
+    this.valid = valid
     this
   }
 
@@ -43,7 +53,7 @@ trait InfoThCriterion extends Serializable with Ordered[InfoThCriterion] {
   /** 
    * Initialize a criterion with a given relevance value
    */
-  def init(relevance: Double): InfoThCriterion
+  def init(relevance: Float): InfoThCriterion
 
   /**
    * 
@@ -52,12 +62,14 @@ trait InfoThCriterion extends Serializable with Ordered[InfoThCriterion] {
    * @param cmi Conditional mutual information between the criterion and another variable.
    * 
    */
-  def update(mi: Double, cmi: Double): InfoThCriterion
+  def update(mi: Float, cmi: Float): InfoThCriterion
 
   /**
    * Returns the value of the criterion for in a precise moment.
    */
-  def score: Double
+  def score: Float
+  
+  
 
 }
 
@@ -69,7 +81,7 @@ trait Bound extends Serializable { self: InfoThCriterion =>
   /**
    * Returns the maximum value the criterion can reach given the relevance.
    */
-  def bound: Double
+  def bound: Float
 }
 
 /**
@@ -77,8 +89,8 @@ trait Bound extends Serializable { self: InfoThCriterion =>
  */
 class Jmi extends InfoThCriterion with Bound {
 
-  var redundance: Double = 0.0
-  var conditionalRedundance: Double = 0.0
+  var redundance: Float = 0.0f
+  var conditionalRedundance: Float = 0.0f
   var selectedSize: Int = 0
 
   override def bound = 2 * relevance
@@ -90,10 +102,10 @@ class Jmi extends InfoThCriterion with Bound {
       relevance
     }
   }
-  override def init(relevance: Double): InfoThCriterion = {
+  override def init(relevance: Float): InfoThCriterion = {
     this.setRelevance(relevance)
   }
-  override def update(mi: Double, cmi: Double): InfoThCriterion = {
+  override def update(mi: Float, cmi: Float): InfoThCriterion = {
     redundance += mi
     conditionalRedundance += cmi
     selectedSize += 1
@@ -107,7 +119,7 @@ class Jmi extends InfoThCriterion with Bound {
  */
 class Mrmr extends InfoThCriterion with Bound {
 
-  var redundance: Double = 0.0
+  var redundance: Float = 0.0f
   var selectedSize: Int = 0
 
   override def bound = relevance
@@ -118,10 +130,10 @@ class Mrmr extends InfoThCriterion with Bound {
       relevance
     }
   }
-  override def init(relevance: Double): InfoThCriterion = {
+  override def init(relevance: Float): InfoThCriterion = {
     this.setRelevance(relevance)
   }
-  override def update(mi: Double, cmi: Double): InfoThCriterion = {
+  override def update(mi: Float, cmi: Float): InfoThCriterion = {
     redundance += mi
     selectedSize += 1
     this
@@ -134,16 +146,16 @@ class Mrmr extends InfoThCriterion with Bound {
  */
 class Cmim extends InfoThCriterion {
 
-  var modifier: Double = 0.0
+  var modifier: Float = 0.0f
 
-  override def score: Double = {
+  override def score: Float = {
     relevance - modifier
   }
-  override def update(mi: Double, cmi: Double): InfoThCriterion = {
+  override def update(mi: Float, cmi: Float): InfoThCriterion = {
     modifier = math.max(modifier, mi - cmi)
     this
   }
-  override def init(relevance: Double): InfoThCriterion = {
+  override def init(relevance: Float): InfoThCriterion = {
     this.setRelevance(relevance)
   }
   override def toString: String = "CMIM"
@@ -164,16 +176,16 @@ class If extends Cmim {
  */
 class Icap extends InfoThCriterion {
 
-  var modifier: Double = 0.0
+  var modifier: Float = 0.0f
 
-  override def score: Double = {
+  override def score: Float = {
     relevance - modifier
   }
-  override def update(mi: Double, cmi: Double): InfoThCriterion = {
-    modifier += math.max(0.0, mi - cmi)
+  override def update(mi: Float, cmi: Float): InfoThCriterion = {
+    modifier += math.max(0.0f, mi - cmi)
     this
   }
-  override def init(relevance: Double): InfoThCriterion = {
+  override def init(relevance: Float): InfoThCriterion = {
     this.setRelevance(relevance)
   }
   override def toString: String = "ICAP"
