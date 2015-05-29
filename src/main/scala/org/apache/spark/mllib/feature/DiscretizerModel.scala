@@ -31,11 +31,11 @@ import org.apache.spark.annotation.Experimental
  */
 
 @Experimental
-class DiscretizerModel (val thresholds: Array[(Int, Seq[Float])]) extends VectorTransformer {
+class DiscretizerModel (val thresholds: Array[Array[Float]]) extends VectorTransformer {
   
-  require(isSorted(thresholds.map(_._1)), "Array has to be sorted asc")
+  //require(isSorted(thresholds.map(_._1)), "Array has to be sorted asc")
   
-  protected def isSorted(array: Array[Int]): Boolean = {
+  /*protected def isSorted(array: Array[Int]): Boolean = {
     var i = 1
     while (i < array.length) {
       if (array(i) < array(i-1)) return false
@@ -55,13 +55,13 @@ class DiscretizerModel (val thresholds: Array[(Int, Seq[Float])]) extends Vector
       case v: SparseVector =>
         var newValues = Array.empty[Double]
         var j = 0
-        for (i <- v.indices){
-          val tmpj = thresholds.indexWhere({case (idx, _) => i == idx}, j)
+        for (i <- 0 until v.indices.length){
+          val tmpj = thresholds.indexWhere({case (idx, _) => v.indices(i) == idx}, j)
           if (tmpj != -1) {
             newValues = assignDiscreteValue(v(i), thresholds(tmpj)._2).toDouble +: newValues
             j = tmpj
           } else {                  
-            newValues = v.values(i) +: newValues
+            newValues = v(i) +: newValues
           }
         }
         // the `index` array inside sparse vector object will not be changed
@@ -81,8 +81,25 @@ class DiscretizerModel (val thresholds: Array[(Int, Seq[Float])]) extends Vector
           }          
           Vectors.dense(newValues.reverse)
     }    
+  }*/
+  
+  override def transform(data: Vector) = {
+    data match {
+      case v: SparseVector =>
+        val newValues = for (i <- 0 until v.indices.length) 
+          yield assignDiscreteValue(v.values(i), thresholds(v.indices(i))).toDouble
+        
+        // the `index` array inside sparse vector object will not be changed,
+        // so we can re-use it to save memory.
+        Vectors.sparse(v.size, v.indices, newValues.toArray)
+        
+        case v: DenseVector =>
+          val newValues = for (i <- 0 until v.values.length)
+            yield assignDiscreteValue(v(i), thresholds(i)).toDouble         
+          Vectors.dense(newValues.toArray)
+    }    
   }
-
+  
   /**
    * Discretizes values in a given dataset using thresholds.
    *
@@ -93,34 +110,17 @@ class DiscretizerModel (val thresholds: Array[(Int, Seq[Float])]) extends Vector
     val bc_thresholds = data.context.broadcast(thresholds)    
     data.map {
       case v: SparseVector =>
-        var newValues = Array.empty[Double]
-        var j = 0
-        for (i <- 0 until v.indices.length){
-          val tmpj = bc_thresholds.value.indexWhere({case (idx, _) => v.indices(i) == idx}, j)
-          if (tmpj != -1) {
-            newValues = assignDiscreteValue(v(i), bc_thresholds.value(tmpj)._2).toDouble +: newValues
-            j = tmpj
-          } else {                  
-            newValues = v(i) +: newValues
-          }
-        }
+        val newValues = for (i <- 0 until v.indices.length) 
+          yield assignDiscreteValue(v.values(i), bc_thresholds.value(v.indices(i))).toDouble
+        
         // the `index` array inside sparse vector object will not be changed,
         // so we can re-use it to save memory.
-        Vectors.sparse(v.size, v.indices, newValues.reverse)
+        Vectors.sparse(v.size, v.indices, newValues.toArray)
         
         case v: DenseVector =>
-          var newValues = Array.empty[Double]
-          var j = 0
-          for (i <- 0 until v.values.length){
-            val tmpj = bc_thresholds.value.indexWhere({case (idx, _) => i == idx}, j)
-            if (tmpj != -1) {
-              newValues = assignDiscreteValue(v.values(i), bc_thresholds.value(tmpj)._2).toDouble +: newValues
-              j = tmpj
-            } else {                  
-              newValues = v.values(i) +: newValues
-            }
-          }          
-          Vectors.dense(newValues.reverse)
+          val newValues = for (i <- 0 until v.values.length)
+            yield assignDiscreteValue(v(i), bc_thresholds.value(i)).toDouble         
+          Vectors.dense(newValues.toArray)
     }    
   }
 
@@ -131,7 +131,7 @@ class DiscretizerModel (val thresholds: Array[(Int, Seq[Float])]) extends Vector
    * @param thresholds Thresholds used to assign a discrete value
    */
   private def assignDiscreteValue(value: Double, thresholds: Seq[Float]) = {
-    if(thresholds.isEmpty) 1 else if (value > thresholds.last) thresholds.size + 1 
+    if(thresholds.isEmpty) value else if (value > thresholds.last) thresholds.size + 1 
       else thresholds.indexWhere{value <= _} + 1
   }
 

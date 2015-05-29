@@ -34,11 +34,12 @@ object MLExperimentUtils {
   			}
 		  }
   
-  		private def parseThresholds (str: String): (Int, Seq[Float])= {
+  		private def parseThresholds (str: String) = {
   			val tokens = str split "\t"
-  			val points = tokens.slice(1, tokens.length).map(_.toFloat)
-  			val attIndex = tokens(0).toInt
-  			(attIndex, points.toSeq)
+  			val points = tokens.map(_.toFloat)
+  			//val attIndex = tokens(0).toInt
+  			//(attIndex, points.toSeq)
+        points
   		}
   		
   		private def parseSelectedAtts (str: String) = {
@@ -141,13 +142,13 @@ object MLExperimentUtils {
 			try {
 				val thresholds = sc.textFile(outputDir + "/discThresholds_" + iteration).filter(!_.isEmpty())
 									.map(parseThresholds).collect
-				
 				val discAlgorithm = new DiscretizerModel(thresholds)
 				val discTime = sc.textFile(outputDir + "/disc_time_" + iteration)
 						.filter(!_.isEmpty())
 						.map(_.toDouble)
 						.first
             // More efficient than by-instance version
+            println("Readed tresholds")
 		        val discData = discAlgorithm.transform(train.map(_.features))
               .zip(train.map(_.label))
               .map{case (v, l) => LabeledPoint(l, v)}
@@ -157,11 +158,11 @@ object MLExperimentUtils {
 		        
             // Save discretized data 
 		        if(save) {
-             discData.map({lp => lp.features.toArray.mkString(",") + "," + lp.label})
-               .saveAsTextFile(outputDir + "/disc_train_" + iteration + ".csv")
-             discTestData.map({lp => lp.features.toArray.mkString(",") + "," + lp.label})
-               .saveAsTextFile(outputDir + "/disc_test_" + iteration + ".csv")       
-		        } 
+             discData.saveAsTextFile(outputDir + "/disc_train_" + iteration + ".csv")
+             discTestData.saveAsTextFile(outputDir + "/disc_test_" + iteration + ".csv")       
+		        }
+            
+            println("Discretized all data")
         
 				(discData, discTestData, discTime)			
 				
@@ -169,7 +170,10 @@ object MLExperimentUtils {
 				case iie: org.apache.hadoop.mapred.InvalidInputException =>
 					val initStartTime = System.nanoTime()
 					val discAlgorithm = discretize(train)
-					val discTime = (System.nanoTime() - initStartTime) / 1e9          
+					val discTime = (System.nanoTime() - initStartTime) / 1e9 
+          
+          val thrsRDD = sc.parallelize(discAlgorithm.thresholds).map(_.mkString(","))
+          thrsRDD.saveAsTextFile(outputDir + "/discThresholds_" + iteration)
           
           // More efficient than by-instance version
           val discData = discAlgorithm.transform(train.map(_.features))
@@ -179,21 +183,13 @@ object MLExperimentUtils {
             .zip(test.map(_.label))
             .map{case (v, l) => LabeledPoint(l, v)}
           
-		          
+          println("Todo transformado!")
           // Save discretized data 
           if(save) {
-             discData.map({lp => lp.features.toArray.mkString(",") + "," + lp.label})
-               .saveAsTextFile(outputDir + "/disc_train_" + iteration + ".csv")
-             discTestData.map({lp => lp.features.toArray.mkString(",") + "," + lp.label})
-               .saveAsTextFile(outputDir + "/disc_test_" + iteration + ".csv")       
+             discData.saveAsTextFile(outputDir + "/disc_train_" + iteration + ".csv")
+             discTestData.saveAsTextFile(outputDir + "/disc_test_" + iteration + ".csv")       
           } 
-					
-					// Save the obtained thresholds in a HDFS file (as a sequence)
-					val thresholds = discAlgorithm.thresholds.toArray.sortBy(_._1)
-					val output = thresholds.foldLeft("")((str, elem) => str + 
-								elem._1 + "\t" + elem._2.mkString("\t") + "\n")
-					val parThresholds = sc.parallelize(Array(output), 1)
-					parThresholds.saveAsTextFile(outputDir + "/discThresholds_" + iteration)
+          
 					val strTime = sc.parallelize(Array(discTime.toString), 1)
 					strTime.saveAsTextFile(outputDir + "/disc_time_" + iteration)
 					
@@ -228,10 +224,8 @@ object MLExperimentUtils {
         
           // Save reduced data 
           if(save) {
-             redTrain.map({lp => lp.features.toArray.mkString(",") + "," + lp.label})
-               .saveAsTextFile(outputDir + "/fs_train_" + iteration + ".csv")
-             redTest.map({lp => lp.features.toArray.mkString(",") + "," + lp.label})
-               .saveAsTextFile(outputDir + "/fs_test_" + iteration + ".csv")     
+             redTrain.saveAsTextFile(outputDir + "/fs_train_" + iteration + ".csv")
+             redTest.saveAsTextFile(outputDir + "/fs_test_" + iteration + ".csv")     
           }         
         
 				(redTrain, redTest, FSTime)
@@ -243,15 +237,15 @@ object MLExperimentUtils {
           
 					val featureSelector = fs(fstrain)
 					val FSTime = (System.nanoTime() - initStartTime) / 1e9
+          
+          
           val redTrain = fstrain.map(i => LabeledPoint(i.label, featureSelector.transform(i.features)))
           val redTest = test.map(i => LabeledPoint(i.label, featureSelector.transform(i.features)))
           
           // Save reduced data 
           if(save) {
-             redTrain.map({lp => lp.features.toArray.mkString(",") + "," + lp.label})
-               .saveAsTextFile(outputDir + "/fs_train_" + iteration + ".csv")
-             redTest.map({lp => lp.features.toArray.mkString(",") + "," + lp.label})
-               .saveAsTextFile(outputDir + "/fs_test_" + iteration + ".csv")       
+             redTrain.saveAsTextFile(outputDir + "/fs_train_" + iteration + ".csv")
+             redTest.saveAsTextFile(outputDir + "/fs_test_" + iteration + ".csv")       
           }    
 					
 					// Save the obtained FS scheme in a HDFS file (as a sequence)					

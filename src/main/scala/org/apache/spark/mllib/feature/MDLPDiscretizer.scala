@@ -60,23 +60,8 @@ class MDLPDiscretizer private (val data: RDD[LabeledPoint]) extends Serializable
    */  
   private def processContinuousAttributes(
       contIndices: Option[Seq[Int]], 
-      nFeatures: Int, 
-      dense: Boolean) = {
-    // Generate pairs according to the data format.
-    def calcRawData = {
-      dense match {
-        case true =>
-          data.flatMap({case LabeledPoint(label, values) =>
-            for(k <- 0 until values.toArray.length) yield (k, values.toArray(k))
-          })
-        case false =>
-          data.flatMap({case LabeledPoint(label, values) =>
-            val v = values.asInstanceOf[SparseVector]
-            for(i <- 0 until v.indices.size) yield (v.indices(i), v.values(i))
-          })
-      }    
-    }
-      
+      nFeatures: Int) = {
+    // Generate pairs according to the data format.      
     /**
      *  (Pre-processing) Count the number of features 
      *  and select those with a high number of distinct values
@@ -87,11 +72,7 @@ class MDLPDiscretizer private (val data: RDD[LabeledPoint]) extends Serializable
         val intersect = (0 until nFeatures).seq.intersect(s)
         require(intersect.size == s.size)
         s.toArray
-      case None =>        
-        /*val countFeat = calcRawData.distinct.mapValues(d => 1L).reduceByKey(_ + _)
-          .filter{case (_, c) => c > maxLimitBins}
-        val cvars = countFeat.sortByKey().keys.collect()
-        cvars */
+      case None =>
         (0 until nFeatures).toArray
     }
   }
@@ -390,11 +371,15 @@ class MDLPDiscretizer private (val data: RDD[LabeledPoint]) extends Serializable
     val (dense, nFeatures) = data.first.features match {
       case v: DenseVector => 
         (true, v.size)
-      case v: SparseVector =>         
-          (false, v.size)
+      case v: SparseVector =>     
+        val nfeat = data.map({ lp =>
+          val ind = lp.features.asInstanceOf[SparseVector].indices
+          if(ind.length != 0) ind.max else -1
+        }).max() + 1
+        (false, nfeat)
     }
             
-    val continuousVars = processContinuousAttributes(contFeat, nFeatures, dense)
+    val continuousVars = processContinuousAttributes(contFeat, nFeatures)
     logInfo("Number of continuous attributes: " + continuousVars.distinct.size)
     logInfo("Total number of attributes: " + nFeatures)      
     if(continuousVars.isEmpty) logWarning("Discretization aborted. " +
@@ -404,20 +389,17 @@ class MDLPDiscretizer private (val data: RDD[LabeledPoint]) extends Serializable
     val featureValues = dense match {
       case true => 
         val bContinuousVars = sc.broadcast(continuousVars)
-        data.flatMap({case LabeledPoint(label, values) =>            
-          bContinuousVars.value.map{ k =>
+        data.flatMap({ case LabeledPoint(label, dv: DenseVector) =>            
             val c = Array.fill[Long](nLabels)(0L)
             c(bLabels2Int.value(label)) = 1L
             // BigDecimal(d).setScale(6, BigDecimal.RoundingMode.HALF_UP).toFloat
-            ((k, values(k).toFloat), c)
-          }                   
+            for(i <- 0 until dv.values.length) yield ((i, dv(i).toFloat), c)                  
         })
       case false =>
         val bContVars = sc.broadcast(continuousVars)          
-        data.flatMap{case LabeledPoint(label, values: Vector) =>
+        data.flatMap{ case LabeledPoint(label, sv: SparseVector) =>
           val c = Array.fill[Long](nLabels)(0L)
-          val v = FeatureUtils.compress(values, bContVars.value)
-          val sv = v.asInstanceOf[SparseVector]
+          //val v = FeatureUtils.compress(values, bContVars.value)
           c(bLabels2Int.value(label)) = 1L
           // BigDecimal(d).setScale(6, BigDecimal.RoundingMode.HALF_UP).toFloat
           for(i <- 0 until sv.indices.length) yield ((sv.indices(i), sv.values(i).toFloat), c)
@@ -433,23 +415,29 @@ class MDLPDiscretizer private (val data: RDD[LabeledPoint]) extends Serializable
     val zeros = nonzeros
       .map{case ((k, p), v) => (k, v)}
       .reduceByKey{ case (v1, v2) =>  (v1, v2).zipped.map(_ + _)}
-      .map{case (k, v) => 
+      .map{ case (k, v) => 
         val v2 = for(i <- 0 until v.length) yield bclassDistrib.value(i) - v(i)
         ((k, 0.0F), v2.toArray)
       }.filter{case (_, v) => v.sum > 0}
     val distinctValues = nonzeros.union(zeros)
     
     // Sort these values to perform the boundary points evaluation
-    val sortedValues = distinctValues.sortByKey()   
+    val sortedValues = distinctValues.sortByKey()
           
     // Get the first elements by partition for the boundary points evaluation
     val firstElements = sc.runJob(sortedValues, { case it =>
       if (it.hasNext) Some(it.next()._1) else None
     }: (Iterator[((Int, Float), Array[Long])]) => Option[(Int, Float)])
       
+    // Filter those features selected by the user (or all features)
+    val arr = Array.fill(nFeatures) { false }
+    continuousVars.map(arr(_) = true)
+    val barr = sc.broadcast(arr)
+    
     // Get only boundary points from the whole set of distinct values
     val initialCandidates = initialThresholds(sortedValues, firstElements)
       .map{case ((k, point), c) => (k, (point, c))}
+      .filter({case (k, _) => barr.value(k)})
       .cache() // It will be iterated through "big features" loop
       
     // Divide RDD into two categories according to the number of points by feature
@@ -476,9 +464,16 @@ class MDLPDiscretizer private (val data: RDD[LabeledPoint]) extends Serializable
 
     // Join all thresholds and return them
     val bigThRDD = sc.parallelize(bigThresholds.toSeq)
-    val thresholds = smallThresholds.union(bigThRDD)
-      .sortByKey() // Important!
-      .collect                        
+    val thrs = smallThresholds.union(bigThRDD).collect()
+      //.sortByKey() // Important!
+      //.collect
+    
+    // Update thresholds with those calculated previously
+    val base = new Array[Float](1)
+    base(0) = Float.MaxValue
+    val thresholds = Array.fill(nFeatures)(base)  
+    thrs.foreach({case (k, vth) => thresholds(k) = vth.toArray})
+    
     new DiscretizerModel(thresholds)
   }
 }
