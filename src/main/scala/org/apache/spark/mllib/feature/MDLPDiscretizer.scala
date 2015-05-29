@@ -170,7 +170,7 @@ class MDLPDiscretizer private (val data: RDD[LabeledPoint]) extends Serializable
         }
       }
     }
-    result.sorted
+    (Float.PositiveInfinity +: result).sorted
   }
   
   /**
@@ -205,7 +205,7 @@ class MDLPDiscretizer private (val data: RDD[LabeledPoint]) extends Serializable
         }
       }
     }
-    result.sorted
+    (Float.PositiveInfinity +: result).sorted
   }
 
   /**
@@ -469,8 +469,7 @@ class MDLPDiscretizer private (val data: RDD[LabeledPoint]) extends Serializable
       //.collect
     
     // Update thresholds with those calculated previously
-    val base = new Array[Float](1)
-    base(0) = Float.MaxValue
+    val base = Array.empty[Float]
     val thresholds = Array.fill(nFeatures)(base)  
     thrs.foreach({case (k, vth) => thresholds(k) = vth.toArray})
     
