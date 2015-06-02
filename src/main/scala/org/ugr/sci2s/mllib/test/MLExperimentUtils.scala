@@ -35,11 +35,13 @@ object MLExperimentUtils {
 		  }
   
   		private def parseThresholds (str: String) = {
-  			val tokens = str split "\t"
-  			val points = tokens.map(_.toFloat)
+  			val tokens = str split ","
+        val index = tokens(0)
+  			val thresh = if (tokens.length > 1) tokens.slice(1, tokens.length).map(_.toFloat) else Array.empty[Float]
+        (index, thresh)
   			//val attIndex = tokens(0).toInt
   			//(attIndex, points.toSeq)
-        points
+        //points
   		}
   		
   		private def parseSelectedAtts (str: String) = {
@@ -140,29 +142,29 @@ object MLExperimentUtils {
 		  	 *  if not, we calculate them
 		  	 **/
 			try {
-				val thresholds = sc.textFile(outputDir + "/discThresholds_" + iteration).filter(!_.isEmpty())
-									.map(parseThresholds).collect
+				val thresholds = sc.textFile(outputDir + "/discThresholds_" + iteration) //.filter(!_.isEmpty())
+									.map(parseThresholds).sortByKey().values.collect
 				val discAlgorithm = new DiscretizerModel(thresholds)
 				val discTime = sc.textFile(outputDir + "/disc_time_" + iteration)
 						.filter(!_.isEmpty())
 						.map(_.toDouble)
 						.first
-            // More efficient than by-instance version
-            println("Readed tresholds")
-		        val discData = discAlgorithm.transform(train.map(_.features))
-              .zip(train.map(_.label))
-              .map{case (v, l) => LabeledPoint(l, v)}
-            val discTestData = discAlgorithm.transform(test.map(_.features))
-              .zip(test.map(_.label))
-              .map{case (v, l) => LabeledPoint(l, v)}
-		        
-            // Save discretized data 
-		        if(save) {
-             discData.saveAsTextFile(outputDir + "/disc_train_" + iteration + ".csv")
-             discTestData.saveAsTextFile(outputDir + "/disc_test_" + iteration + ".csv")       
-		        }
-            
-            println("Discretized all data")
+        // More efficient than by-instance version
+        println("Readed tresholds")
+        val discData = discAlgorithm.transform(train.map(_.features))
+          .zip(train.map(_.label))
+          .map{case (v, l) => LabeledPoint(l, v)}
+        val discTestData = discAlgorithm.transform(test.map(_.features))
+          .zip(test.map(_.label))
+          .map{case (v, l) => LabeledPoint(l, v)}
+        
+        // Save discretized data 
+        if(save) {
+         discData.saveAsTextFile(outputDir + "/disc_train_" + iteration + ".csv")
+         discTestData.saveAsTextFile(outputDir + "/disc_test_" + iteration + ".csv")       
+        }
+        
+        println("Discretized all data")
         
 				(discData, discTestData, discTime)			
 				
@@ -172,7 +174,10 @@ object MLExperimentUtils {
 					val discAlgorithm = discretize(train)
 					val discTime = (System.nanoTime() - initStartTime) / 1e9 
           
-          val thrsRDD = sc.parallelize(discAlgorithm.thresholds).map(_.mkString(","))
+          val thrsRDD = sc.parallelize(discAlgorithm.thresholds.zipWithIndex)
+            .map(_.swap)
+            .sortByKey()
+            .map({case (i, arr) => i + "," + arr.mkString(",")})
           thrsRDD.saveAsTextFile(outputDir + "/discThresholds_" + iteration)
           
           // More efficient than by-instance version
@@ -183,7 +188,6 @@ object MLExperimentUtils {
             .zip(test.map(_.label))
             .map{case (v, l) => LabeledPoint(l, v)}
           
-          println("Todo transformado!")
           // Save discretized data 
           if(save) {
              discData.saveAsTextFile(outputDir + "/disc_train_" + iteration + ".csv")
