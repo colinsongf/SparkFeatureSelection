@@ -64,11 +64,11 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
     
     val label = nFeatures - 1
     val (distinctByFeat, relevances) = if(data.isDense) {
-      val counterByKey = data.dense.mapValues({ case (_, v) => v.max + 1})
+    val counterByKey = data.dense.mapValues({ case (_, v) => v.max + 1})
         .reduceByKey((m1, m2) => if(m1 > m2) m1 else m2).collectAsMap().toMap
       // calculate relevance
-      val MiAndCmi = IT.computeMI(
-        data.dense, 0 until label, label, nInstances, nFeatures, counterByKey)
+    val MiAndCmi = IT.computeMI(
+      data.dense, 0 until label, label, nInstances, nFeatures, counterByKey)
       (counterByKey, MiAndCmi)
     } else {
       //val nInstances = data.sparse.count() / nFeatures
@@ -77,14 +77,17 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
         .collectAsMap()
         .toMap
       // calculate relevance
+      println("Counter: " + counterByKey.toString())
+      // println("Spare data: " + data.sparse.first()._2.toString())
       val MiAndCmi = IT.computeMISparse(
         data.sparse, 0 until label, label, nInstances, nFeatures, counterByKey)
       (counterByKey, MiAndCmi)
     }    
 
-    val pool = Array.ofDim[InfoThCriterion](nFeatures - 1) // not label
-    relevances.collect.foreach{case (x, mi) => pool(x) = criterionFactory.getCriterion.init(mi.toFloat)}
-      
+    // Init all (less output attribute) criterions to a bad score
+    val pool = Array.fill[InfoThCriterion](nFeatures - 1)(criterionFactory.getCriterion.init(Float.NegativeInfinity)) 
+    relevances.collect.foreach{ case (x, mi) => pool(x) = criterionFactory.getCriterion.init(mi.toFloat) }
+    
     // Print most relevant features
     val strRels = relevances.collect().sortBy(-_._2)
       .take(nToSelect)
@@ -94,14 +97,11 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
     
     // get maximum and select it
     val (max, mid) = pool.zipWithIndex.maxBy(_._1.relevance)
-    /*var (maxi, max) = (-1, Float.MinValue)
-     * for(i <- 0 until pool.length; sc = pool(i).score) {
-      if(sc > max) maxi = i; max = sc
-    }*/
     var selected = Seq(F(mid, max.score))
     pool(mid).setValid(false)
 
-    while (selected.size < nToSelect) {
+    var moreFeat = true
+    while (selected.size < nToSelect && moreFeat) {
       // update pool
       val ids = for (i <- 0 until pool.length if pool(i).valid) yield i
       val redundancies = if(data.isDense) {        
@@ -124,10 +124,18 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
       })*/      
       
       // get maximum and save it
-      val (max, mid) = pool.zipWithIndex.maxBy(_._1.score)
+      var (maxi, max) = (-1, Float.NegativeInfinity)
+      for(i <- 0 until pool.length if pool(i).valid; sc = pool(i).score) {
+        if(sc > max) maxi = i; max = sc
+      }
+      
       // select the best feature and remove from the whole set of features
-      selected = F(mid, max.score) +: selected
-      pool(mid).setValid(false)
+      if(maxi != 1){
+        selected = F(maxi, max) +: selected
+        pool(maxi).setValid(false)
+      } else {
+        moreFeat = false
+      }
     }
     selected.reverse
   }
@@ -142,7 +150,7 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
         + " parent RDDs are also uncached.")
     }
       
-    val requireByteValues = (l: Double, v: Vector) => {        
+    val requireByteValues = (v: Vector) => {        
       val values = v match {
         case sv: SparseVector =>
           sv.values
@@ -151,7 +159,7 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
       }
       val condition = (value: Double) => value <= Byte.MaxValue && 
         value >= Byte.MinValue && value % 1 == 0.0
-      if (!values.forall(condition(_)) || !condition(l)) {
+      if (!values.forall(condition(_))) {
         throw new SparkException(s"Info-Theoretic Framework requires positive values in range [0, 255]")
       }           
     }
@@ -159,11 +167,10 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
     val first = data.first
     val dense = first.features.isInstanceOf[DenseVector]    
     var nInstances = 0L
-    var nFeatures = 0
+    val nFeatures = first.features.size + 1
     
     val colData = if(dense) {
       
-      nFeatures = first.features.size + 1
       val nPart = if(numPartitions == 0) nFeatures else numPartitions
       if(nPart > nFeatures) {
         logWarning("Number of partitions should be less than the number of features in the dataset."
@@ -172,16 +179,15 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
       
       val columnarData: RDD[(Int, (Int, Array[Byte]))] = data.mapPartitionsWithIndex({ (index, it) =>
         val data = it.toArray
-        val nfeat = data(0).features.size + 1
-        val mat = Array.ofDim[Byte](nfeat, data.length)
+        val mat = Array.ofDim[Byte](nFeatures, data.length)
         var j = 0
         for(reg <- data) {
-          requireByteValues(reg.label, reg.features)
+          requireByteValues(reg.features)
           for(i <- 0 until reg.features.size) mat(i)(j) = reg.features(i).toByte
           mat(reg.features.size)(j) = reg.label.toByte
           j += 1
         }
-        val chunks = for(i <- 0 until nfeat) yield (i -> (index, mat(i)))
+        val chunks = for(i <- 0 until nFeatures) yield (i -> (index, mat(i)))
         chunks.toIterator
       })      
       // Sort to group all chunks for the same feature closely. It will avoid to shuffle too much histograms
@@ -191,28 +197,27 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
       
       nInstances = denseData.lookup(0).map(_._2.length).reduce(_ + _)
       ColumnarData(denseData, null, true)      
-    } else {
+    } else {      
       
-      nFeatures = data.map({v => 
-        val sv = v.features.asInstanceOf[SparseVector]; 
-        if(sv.indices.length == 0) 1 else sv.indices.max
-      }).max() + 1
+      //val distinct = data.flatMap(_.features.asInstanceOf[SparseVector].indices).distinct().count()
+      //val maxindex = data.flatMap(_.features.asInstanceOf[SparseVector].indices).max()
+      val classMap = data.map(_.label).distinct.collect().zipWithIndex.toMap
+      println("ClassMap: " + classMap.toString())
       
       val sparseData = data.zipWithUniqueId.flatMap ({ case (lp, r) => 
-          requireByteValues(lp.label, lp.features)
+          requireByteValues(lp.features)
           val sv = lp.features.asInstanceOf[SparseVector]
-          val output = (nFeatures - 1) -> (r, lp.label.toByte)
+          val output = (nFeatures - 1) -> (r, classMap(lp.label).toByte)
           val inputs = for(i <- 0 until sv.indices.length) 
             yield (sv.indices(i), (r, sv.values(i).toByte))
           output +: inputs           
-      }).sortByKey(numPartitions = numPartitions).persist(StorageLevel.MEMORY_ONLY)
-      val c = sparseData.count()
+      })
       
-      val sparseData2 = data.zipWithUniqueId.mapPartitions ({ it =>        
+      /*val sparseData2 = data.zipWithUniqueId().mapPartitions ({ it =>        
         val featCols = Array.fill(nFeatures){ HashMap[Long, Byte]() }
         for ((lp, inst) <- it) {
           requireByteValues(lp.label, lp.features)
-          featCols(nFeatures - 1) += inst -> lp.label.toByte
+          featCols(nFeatures - 1) += inst -> classMap(lp.label).toByte
           val v = lp.features.asInstanceOf[SparseVector]
           (0 until v.indices.length).map({ i =>            
             featCols(v.indices(i)) += inst -> v.values(i).toByte   
@@ -220,9 +225,9 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
         }
         featCols.zipWithIndex.map({case (col, idx) => (idx, col)}).toIterator            
       }).reduceByKey(_ ++ _).persist(StorageLevel.MEMORY_ONLY)   
-      val c2 = sparseData2.count()
+      val c2 = sparseData2.count()*/
       
-      /*val columnarData = sparseData.groupByKey(numPartitions = nPart)
+      /*val columnarData = sparseData.groupByKey(numPartitions = numPartitions)
         .mapValues(a => TreeMap(a.toArray:_*))
         .persist(StorageLevel.MEMORY_ONLY)
       val c3 = columnarData.count()*/
@@ -233,7 +238,7 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
       val c4 = columnarData.count()
       nInstances = data.count()
       
-      ColumnarData(null, sparseData2, false)
+      ColumnarData(null, columnarData, false)
     }
     
     require(nToSelect < nFeatures)  

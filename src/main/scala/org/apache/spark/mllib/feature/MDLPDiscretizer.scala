@@ -372,11 +372,11 @@ class MDLPDiscretizer private (val data: RDD[LabeledPoint]) extends Serializable
       case v: DenseVector => 
         (true, v.size)
       case v: SparseVector =>     
-        val nfeat = data.map({ lp =>
+        /*val nfeat = data.map({ lp =>
           val ind = lp.features.asInstanceOf[SparseVector].indices
           if(ind.length != 0) ind.max else -1
-        }).max() + 1
-        (false, nfeat)
+        }).max() + 1*/
+        (false, v.size)
     }
             
     val continuousVars = processContinuousAttributes(contFeat, nFeatures)
@@ -471,6 +471,9 @@ class MDLPDiscretizer private (val data: RDD[LabeledPoint]) extends Serializable
     // Update thresholds with those calculated previously
     val base = Array.empty[Float]
     val thresholds = Array.fill(nFeatures)(base)  
+    println("Thresholds obtained: " + thrs.length)
+    println("Total features: " + nFeatures)
+    
     thrs.foreach({case (k, vth) => thresholds(k) = vth.toArray})
     
     new DiscretizerModel(thresholds)

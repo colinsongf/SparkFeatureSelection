@@ -133,7 +133,7 @@ class DiscretizerModel (val thresholds: Array[Array[Float]]) extends VectorTrans
    * Note: The last threshold must be always Positive Infinity
    */
   private def assignDiscreteValue(value: Double, thresholds: Seq[Float]) = {
-    if(thresholds.isEmpty) value else thresholds.indexWhere{value <= _}
+    if(thresholds.isEmpty) value else thresholds.indexWhere{value <= _} + 1
   }
 
 }
