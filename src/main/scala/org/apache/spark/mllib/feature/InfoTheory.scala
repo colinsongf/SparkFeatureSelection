@@ -20,6 +20,7 @@ package org.apache.spark.mllib.feature
 import breeze.linalg._
 import breeze.numerics._
 import breeze.linalg.{DenseVector => BDV, SparseVector => BSV, Vector => BV, DenseMatrix => BDM}
+
 import org.apache.spark.rdd.RDD
 import org.apache.spark.SparkContext._
 import org.apache.spark.mllib.regression.LabeledPoint
@@ -27,8 +28,10 @@ import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.mllib.linalg.DenseVector
 import org.apache.spark.mllib.linalg.SparseVector
 import org.apache.spark.SparkException
-import scala.collection.immutable.TreeMap
+
 import scala.collection.immutable.HashMap
+import scala.collection.immutable.LongMap
+import scala.collection.mutable
 
 /**
  * Information Theory function and distributed primitives.
@@ -36,12 +39,12 @@ import scala.collection.immutable.HashMap
 object InfoTheory {
   
   private var classCol: Array[Array[Byte]] = null
-  private var classColSparse: HashMap[Long, Byte] = null
+  private var classColSparse: LongMap[Byte] = null
   private var marginalProb: RDD[(Int, BDV[Float])] = null
   private var jointProb: RDD[(Int, BDM[Float])] = null
   private var classHist: Map[Byte, Long] = null
   
-  private def computeFrequency(data: HashMap[Long, Byte], nInstances: Long) = {
+  private def computeFrequency(data: LongMap[Byte], nInstances: Long) = {
     val tmp = data.values.groupBy(l => l).map(t => (t._1, t._2.size.toLong))
     tmp.get(0) match {
       case Some(_) => tmp
@@ -86,7 +89,7 @@ object InfoTheory {
    * 
    */
   def computeMISparse(
-      rawData: RDD[(Int, HashMap[Long, Byte])],
+      rawData: RDD[(Int, LongMap[Byte])],
       varX: Seq[Int],
       varY: Int,
       nInstances: Long,      
@@ -134,8 +137,8 @@ object InfoTheory {
   }
   
   private def computeHistogramsSparse(
-      data:  RDD[(Int, HashMap[Long, Byte])],
-      ycol: (Int, HashMap[Long, Byte]),
+      data:  RDD[(Int, LongMap[Byte])],
+      ycol: (Int, LongMap[Byte]),
       yhist: Map[Byte, Long],
       counter: Map[Int, Int],
       nInstances: Long) = {
@@ -150,21 +153,21 @@ object InfoTheory {
       val result = BDM.zeros[Long](
           bCounter.value.getOrElse(feat, maxSize).toInt, ys)
       
-      var histCls = HashMap[Byte, Long]()
+      val histCls = mutable.HashMap.empty ++= yhist // clone
       for ( (inst, x) <- xcol){     
         val y = bycol.value.getOrElse(inst, 0: Byte)     
-        histCls += y -> (yhist(y) - 1)
+        histCls += y -> (histCls(y) - 1)
         result(x, y) += 1
       }
       // Zeros count
       histCls.foreach({ case (c, q) => result(0, c) += q })
       feat -> result
-    }).reduceByKey(_ + _)
+    })
   }
   
   private def computeHistogramsSparse2(
-      data:  RDD[(Int, HashMap[Long, Byte])],
-      ycol: (Int, HashMap[Long, Byte]),
+      data:  RDD[(Int, LongMap[Byte])],
+      ycol: (Int, LongMap[Byte]),
       nInstances: Long,
       counter: Map[Int, Int]) = {
     
@@ -191,7 +194,7 @@ object InfoTheory {
   }
   
   def computeMIandCMISparse(
-      rawData: RDD[(Int, HashMap[Long, Byte])],
+      rawData: RDD[(Int, LongMap[Byte])],
       varX: Seq[Int],
       varY: Int,
       varZ: Int,
@@ -229,9 +232,9 @@ object InfoTheory {
  }
   
   private def computeConditionalHistogramsSparse(
-    data: RDD[(Int, HashMap[Long, Byte])],
-    ycol: (Int, HashMap[Long, Byte]),
-    zcol: (Int, HashMap[Long, Byte]),
+    data: RDD[(Int, LongMap[Byte])],
+    ycol: (Int, LongMap[Byte]),
+    zcol: (Int, LongMap[Byte]),
     zhist: Map[Byte, Long],
     counter: Map[Int, Int],
     nInstances: Long) = {
@@ -243,28 +246,47 @@ object InfoTheory {
       val ys = counter.getOrElse(ycol._1, 256)
       val zs = counter.getOrElse(zcol._1, 256)
       
+      
+       /* val (feat, xcol) = data.first()
+        val result = BDV.fill[BDM[Long]](zs){
+          BDM.zeros[Long](bCounter.value.getOrElse(feat, 256), ys)
+        }
+        
+        val histCls = mutable.HashMap.empty ++= zhist // clone
+        for ( (inst, x) <- xcol){     
+          val y = bycol.value.getOrElse(inst, 0: Byte)
+          val z = bzcol.value.getOrElse(inst, 0: Byte)          
+          histCls += z -> (histCls(z) - 1)
+          result(z)(x, y) += 1
+        }
+        // Zeros count
+        histCls.foreach({ case (c, q) => result(c)(0, 0) += q })
+        println("xcol: " + xcol.size)
+        println("zcol: " + zcol._2.size)
+        println("histCls: " + histCls)*/
+      
       data.map({ case (feat, xcol) =>        
         val result = BDV.fill[BDM[Long]](zs){
           BDM.zeros[Long](bCounter.value.getOrElse(feat, 256), ys)
         }
         
-        var histCls = HashMap[Byte, Long]()
+        val histCls = mutable.HashMap.empty ++= zhist // clone
         for ( (inst, x) <- xcol){     
           val y = bycol.value.getOrElse(inst, 0: Byte)
           val z = bzcol.value.getOrElse(inst, 0: Byte)          
-          histCls += z -> (zhist(z) - 1)
+          histCls += z -> (histCls(z) - 1)
           result(z)(x, y) += 1
         }
         // Zeros count
         histCls.foreach({ case (c, q) => result(c)(0, 0) += q })
         feat -> result
-    }).reduceByKey(_ + _)
+    })
   }  
     
   private def computeConditionalHistogramsSparse2(
-    data: RDD[(Int, HashMap[Long, Byte])],
-    ycol: (Int, HashMap[Long, Byte]),
-    zcol: (Int, HashMap[Long, Byte]),
+    data: RDD[(Int, LongMap[Byte])],
+    ycol: (Int, LongMap[Byte]),
+    zcol: (Int, LongMap[Byte]),
     nInstances: Long,
     counter: Map[Int, Int]) = {
     

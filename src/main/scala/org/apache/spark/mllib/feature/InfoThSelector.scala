@@ -29,7 +29,7 @@ import org.apache.spark.annotation.Experimental
 import org.apache.spark.Logging
 import org.apache.spark.mllib.feature.{InfoThCriterionFactory => FT}
 import org.apache.spark.mllib.feature.{InfoTheory => IT}
-import scala.collection.immutable.HashMap
+import scala.collection.immutable.LongMap
 
 /**
  * Train a info-theory feature selection model according to a criterion.
@@ -45,7 +45,7 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
   // Case class for criterions by feature
   protected case class F(feat: Int, crit: Double) 
   private case class ColumnarData(dense: RDD[(Int, (Int, Array[Byte]))], 
-      sparse: RDD[(Int, HashMap[Long, Byte])],
+      sparse: RDD[(Int, LongMap[Byte])],
       isDense: Boolean)
 
   /**
@@ -77,7 +77,6 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
         .collectAsMap()
         .toMap
       // calculate relevance
-      println("Counter: " + counterByKey.toString())
       // println("Spare data: " + data.sparse.first()._2.toString())
       val MiAndCmi = IT.computeMISparse(
         data.sparse, 0 until label, label, nInstances, nFeatures, counterByKey)
@@ -85,7 +84,10 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
     }    
 
     // Init all (less output attribute) criterions to a bad score
-    val pool = Array.fill[InfoThCriterion](nFeatures - 1)(criterionFactory.getCriterion.init(Float.NegativeInfinity)) 
+    val pool = Array.fill[InfoThCriterion](nFeatures - 1) {
+      val crit = criterionFactory.getCriterion.init(Float.NegativeInfinity)
+      crit.setValid(false)
+    }
     relevances.collect.foreach{ case (x, mi) => pool(x) = criterionFactory.getCriterion.init(mi.toFloat) }
     
     // Print most relevant features
@@ -111,6 +113,9 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
         IT.computeMIandCMISparse(data.sparse, ids, selected.head.feat, 
           label, nInstances, nFeatures, distinctByFeat)
       }
+      
+      /*val str = redundancies.take(100).mkString("\n")
+      println("First redundancies: " + str)*/
       
       redundancies.collect.foreach({ case (k, (mi, cmi)) =>
         pool(k).update(mi.toFloat, cmi.toFloat)
@@ -193,7 +198,7 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
       // Sort to group all chunks for the same feature closely. It will avoid to shuffle too much histograms
       val denseData = columnarData.sortByKey(numPartitions = nPart).persist(StorageLevel.MEMORY_ONLY)
       val c = denseData.count() // Important to cache the data!
-      println("Number of chunks: " + c)
+      //println("Number of chunks: " + c)
       
       nInstances = denseData.lookup(0).map(_._2.length).reduce(_ + _)
       ColumnarData(denseData, null, true)      
@@ -202,7 +207,6 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
       //val distinct = data.flatMap(_.features.asInstanceOf[SparseVector].indices).distinct().count()
       //val maxindex = data.flatMap(_.features.asInstanceOf[SparseVector].indices).max()
       val classMap = data.map(_.label).distinct.collect().zipWithIndex.toMap
-      println("ClassMap: " + classMap.toString())
       
       val sparseData = data.zipWithUniqueId.flatMap ({ case (lp, r) => 
           requireByteValues(lp.features)
@@ -233,7 +237,7 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
       val c3 = columnarData.count()*/
       
       val columnarData = sparseData
-        .aggregateByKey(HashMap[Long, Byte]())({case (f, e) => f + e}, _ ++ _)
+        .aggregateByKey(LongMap[Byte]())({case (f, e) => f + e}, _ ++ _)
         .persist(StorageLevel.MEMORY_ONLY)    
       val c4 = columnarData.count()
       nInstances = data.count()
