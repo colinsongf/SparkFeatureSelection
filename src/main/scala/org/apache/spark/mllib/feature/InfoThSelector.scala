@@ -30,6 +30,7 @@ import org.apache.spark.Logging
 import org.apache.spark.mllib.feature.{InfoThCriterionFactory => FT}
 import org.apache.spark.mllib.feature.{InfoTheory => IT}
 import scala.collection.immutable.LongMap
+import scala.collection.immutable.HashMap
 
 /**
  * Train a info-theory feature selection model according to a criterion.
@@ -45,7 +46,7 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
   // Case class for criterions by feature
   protected case class F(feat: Int, crit: Double) 
   private case class ColumnarData(dense: RDD[(Int, (Int, Array[Byte]))], 
-      sparse: RDD[(Int, LongMap[Byte])],
+      sparse: RDD[(Int, HashMap[Long, Byte])],
       isDense: Boolean)
 
   /**
@@ -237,7 +238,7 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
       val c3 = columnarData.count()*/
       
       val columnarData = sparseData
-        .aggregateByKey(LongMap[Byte]())({case (f, e) => f + e}, _ ++ _)
+        .aggregateByKey(HashMap.empty[Long, Byte])({case (f, e) => f + e}, _ ++ _)
         .persist(StorageLevel.MEMORY_ONLY)    
       val c4 = columnarData.count()
       nInstances = data.count()

@@ -39,12 +39,12 @@ import scala.collection.mutable
 object InfoTheory {
   
   private var classCol: Array[Array[Byte]] = null
-  private var classColSparse: LongMap[Byte] = null
+  private var classColSparse: HashMap[Long, Byte] = null
   private var marginalProb: RDD[(Int, BDV[Float])] = null
   private var jointProb: RDD[(Int, BDM[Float])] = null
   private var classHist: Map[Byte, Long] = null
   
-  private def computeFrequency(data: LongMap[Byte], nInstances: Long) = {
+  private def computeFrequency(data: HashMap[Long, Byte], nInstances: Long) = {
     val tmp = data.values.groupBy(l => l).map(t => (t._1, t._2.size.toLong))
     tmp.get(0) match {
       case Some(_) => tmp
@@ -89,7 +89,7 @@ object InfoTheory {
    * 
    */
   def computeMISparse(
-      rawData: RDD[(Int, LongMap[Byte])],
+      rawData: RDD[(Int, HashMap[Long, Byte])],
       varX: Seq[Int],
       varY: Int,
       nInstances: Long,      
@@ -137,8 +137,8 @@ object InfoTheory {
   }
   
   private def computeHistogramsSparse(
-      data:  RDD[(Int, LongMap[Byte])],
-      ycol: (Int, LongMap[Byte]),
+      data:  RDD[(Int, HashMap[Long, Byte])],
+      ycol: (Int, HashMap[Long, Byte]),
       yhist: Map[Byte, Long],
       counter: Map[Int, Int],
       nInstances: Long) = {
@@ -166,8 +166,8 @@ object InfoTheory {
   }
   
   private def computeHistogramsSparse2(
-      data:  RDD[(Int, LongMap[Byte])],
-      ycol: (Int, LongMap[Byte]),
+      data:  RDD[(Int, HashMap[Long, Byte])],
+      ycol: (Int, HashMap[Long, Byte]),
       nInstances: Long,
       counter: Map[Int, Int]) = {
     
@@ -194,7 +194,7 @@ object InfoTheory {
   }
   
   def computeMIandCMISparse(
-      rawData: RDD[(Int, LongMap[Byte])],
+      rawData: RDD[(Int, HashMap[Long, Byte])],
       varX: Seq[Int],
       varY: Int,
       varZ: Int,
@@ -232,9 +232,9 @@ object InfoTheory {
  }
   
   private def computeConditionalHistogramsSparse(
-    data: RDD[(Int, LongMap[Byte])],
-    ycol: (Int, LongMap[Byte]),
-    zcol: (Int, LongMap[Byte]),
+    data: RDD[(Int, HashMap[Long, Byte])],
+    ycol: (Int, HashMap[Long, Byte]),
+    zcol: (Int, HashMap[Long, Byte]),
     zhist: Map[Byte, Long],
     counter: Map[Int, Int],
     nInstances: Long) = {
@@ -284,9 +284,9 @@ object InfoTheory {
   }  
     
   private def computeConditionalHistogramsSparse2(
-    data: RDD[(Int, LongMap[Byte])],
-    ycol: (Int, LongMap[Byte]),
-    zcol: (Int, LongMap[Byte]),
+    data: RDD[(Int, HashMap[Long, Byte])],
+    ycol: (Int, HashMap[Long, Byte]),
+    zcol: (Int, HashMap[Long, Byte]),
     nInstances: Long,
     counter: Map[Int, Int]) = {
     
