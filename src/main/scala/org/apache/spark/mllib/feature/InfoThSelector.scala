@@ -31,6 +31,8 @@ import org.apache.spark.mllib.feature.{InfoThCriterionFactory => FT}
 import org.apache.spark.mllib.feature.{InfoTheory => IT}
 import scala.collection.immutable.LongMap
 import scala.collection.immutable.HashMap
+import breeze.linalg.{DenseVector => BDV, SparseVector => BSV, Vector => BV, DenseMatrix => BDM}
+import org.apache.spark.mllib.linalg.Vectors
 
 /**
  * Train a info-theory feature selection model according to a criterion.
@@ -89,11 +91,11 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
       val crit = criterionFactory.getCriterion.init(Float.NegativeInfinity)
       crit.setValid(false)
     }
-    relevances.collect.foreach{ case (x, mi) => pool(x) = criterionFactory.getCriterion.init(mi.toFloat) }
+    
+    relevances.collect().foreach{ case (x, mi) => pool(x) = criterionFactory.getCriterion.init(mi.toFloat) }
     
     // Print most relevant features
-    val strRels = relevances.collect().sortBy(-_._2)
-      .take(nToSelect)
+    val strRels = relevances.sortBy(_._2, false).take(nToSelect)
       .map({case (f, mi) => (f + 1) + "\t" + "%.4f" format mi})
       .mkString("\n")
     println("\n*** MaxRel features ***\nFeature\tScore\n" + strRels) 
@@ -218,6 +220,17 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
           output +: inputs           
       })
       
+      /*val sparseData2 = data.zipWithUniqueId().flatMap ({ case (lp, inst) =>        
+        requireByteValues(lp.features)
+        val v = lp.features.asInstanceOf[SparseVector]
+        val inputs = (0 until v.indices.length).map({ i =>            
+          (v.indices(i), inst) -> v.values(i).toByte   
+        })
+        val output = (nFeatures - 1, inst) -> classMap(lp.label).toByte
+        output +: inputs      
+      }).sortByKey().persist(StorageLevel.MEMORY_ONLY)   
+      val c2 = sparseData2.count()*/
+      
       /*val sparseData2 = data.zipWithUniqueId().mapPartitions ({ it =>        
         val featCols = Array.fill(nFeatures){ HashMap[Long, Byte]() }
         for ((lp, inst) <- it) {
@@ -232,13 +245,25 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
       }).reduceByKey(_ ++ _).persist(StorageLevel.MEMORY_ONLY)   
       val c2 = sparseData2.count()*/
       
-      /*val columnarData = sparseData.groupByKey(numPartitions = numPartitions)
+      /*val columnarData2 = sparseData.groupByKey(numPartitions = numPartitions)
         .mapValues(a => TreeMap(a.toArray:_*))
         .persist(StorageLevel.MEMORY_ONLY)
       val c3 = columnarData.count()*/
       
+      /*val columnarData2 = sparseData.groupByKey().mapValues({ a => 
+          val sorted = a.toArray.sortBy(_._1)
+          val vector: BV[Byte] = if(a.size > nInstances / 2){
+            new BDV(sorted.map(_._2.toByte))
+          } else {   
+            new BSV(sorted.map(_._1.toInt), sorted.map(_._2.toByte), nInstances.toInt)
+          }   
+          vector
+        }).persist(StorageLevel.MEMORY_ONLY)
+      val c3 = columnarData2.count()*/
+      
       val columnarData = sparseData
         .aggregateByKey(HashMap.empty[Long, Byte])({case (f, e) => f + e}, _ ++ _)
+        .sortByKey() // In order to increase the performance of lookups
         .persist(StorageLevel.MEMORY_ONLY)    
       val c4 = columnarData.count()
       nInstances = data.count()
