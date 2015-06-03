@@ -36,7 +36,7 @@ object MLExperimentUtils {
   
   		private def parseThresholds (str: String) = {
   			val tokens = str split ","
-        val index = tokens(0)
+        val index = tokens(0).toInt // Int as key (ordering)
   			val thresh = if (tokens.length > 1) tokens.slice(1, tokens.length).map(_.toFloat) else Array.empty[Float]
         (index, thresh)
   			//val attIndex = tokens(0).toInt
@@ -142,8 +142,12 @@ object MLExperimentUtils {
 		  	 *  if not, we calculate them
 		  	 **/
 			try {
-				val thresholds = sc.textFile(outputDir + "/discThresholds_" + iteration) //.filter(!_.isEmpty())
-									.map(parseThresholds).sortByKey().values.collect
+				val thresholds = sc.textFile(outputDir + "/discThresholds_" + iteration)
+                  .filter(!_.isEmpty())
+									.map(parseThresholds)
+                  .sortByKey()
+                  .values.collect()
+        
 				val discAlgorithm = new DiscretizerModel(thresholds)
 				val discTime = sc.textFile(outputDir + "/disc_time_" + iteration)
 						.filter(!_.isEmpty())
@@ -178,6 +182,7 @@ object MLExperimentUtils {
             .map(_.swap)
             .sortByKey()
             .map({case (i, arr) => i + "," + arr.mkString(",")})
+          
           thrsRDD.saveAsTextFile(outputDir + "/discThresholds_" + iteration)
           
           // More efficient than by-instance version
@@ -214,7 +219,7 @@ object MLExperimentUtils {
 		  	 *  if not, we calculate them
 		  	 **/
 			try {
-				val selectedAtts = sc.textFile(outputDir + "/FSscheme_" + iteration).filter(!_.isEmpty())
+				val selectedAtts = sc.textFile(outputDir + "/fs_scheme_" + iteration).filter(!_.isEmpty())
 										.map(parseSelectedAtts).collect				
 				val featureSelector = new SelectorModel(selectedAtts.map(_._1))
 				
@@ -257,7 +262,7 @@ object MLExperimentUtils {
           val output = selectedAtts.mkString("\n")
 					//val output = selectedAtts.foldLeft("")((str, elem) => str + elem._1 + "\t" + elem._2 + "\n")
 					val parFSscheme = sc.parallelize(Array(output), 1)
-					parFSscheme.saveAsTextFile(outputDir + "/FSscheme_" + iteration)
+					parFSscheme.saveAsTextFile(outputDir + "/fs_scheme_" + iteration)
 					val strTime = sc.parallelize(Array(FSTime.toString), 1)
 					strTime.saveAsTextFile(outputDir + "/fs_time_" + iteration)
           
