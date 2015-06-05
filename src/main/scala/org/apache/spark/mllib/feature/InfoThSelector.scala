@@ -33,6 +33,7 @@ import scala.collection.immutable.LongMap
 import scala.collection.immutable.HashMap
 import breeze.linalg.{DenseVector => BDV, SparseVector => BSV, Vector => BV, DenseMatrix => BDM}
 import org.apache.spark.mllib.linalg.Vectors
+import org.apache.spark.HashPartitioner
 
 /**
  * Train a info-theory feature selection model according to a criterion.
@@ -67,12 +68,14 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
     
     val label = nFeatures - 1
     val (distinctByFeat, relevances) = if(data.isDense) {
-    val counterByKey = data.dense.mapValues({ case (_, v) => v.max + 1})
-        .reduceByKey((m1, m2) => if(m1 > m2) m1 else m2).collectAsMap().toMap
-      // calculate relevance
-    val MiAndCmi = IT.computeMI(
-      data.dense, 0 until label, label, nInstances, nFeatures, counterByKey)
-      (counterByKey, MiAndCmi)
+      val counterByKey = data.dense.mapValues({ case (_, v) => v.max + 1})
+          .reduceByKey((m1, m2) => if(m1 > m2) m1 else m2)
+          .collectAsMap()
+          .toMap
+        // calculate relevance
+      val MiAndCmi = IT.computeMI(
+        data.dense, 0 until label, label, nInstances, nFeatures, counterByKey)
+        (counterByKey, MiAndCmi)
     } else {
       //val nInstances = data.sparse.count() / nFeatures
       val counterByKey: Map[Int, Int] = data.sparse
@@ -111,18 +114,18 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
       val ids = for (i <- 0 until pool.length if pool(i).valid) yield i
       val redundancies = if(data.isDense) {        
         IT.computeMIandCMI(data.dense, ids, selected.head.feat, 
-          label, nInstances, nFeatures, distinctByFeat)
+          label, nInstances, nFeatures, distinctByFeat) // Maybe we can remove counter
       } else {
         IT.computeMIandCMISparse(data.sparse, ids, selected.head.feat, 
-          label, nInstances, nFeatures, distinctByFeat)
+          label, nInstances, nFeatures)
       }
       
-      /*val str = redundancies.take(100).mkString("\n")
-      println("First redundancies: " + str)*/
+      val red = redundancies.collect()
       
-      redundancies.collect.foreach({ case (k, (mi, cmi)) =>
+      //val red = redundancies.collect()
+      /*.foreach({ case (k, (mi, cmi)) =>
         pool(k).update(mi.toFloat, cmi.toFloat)
-      })
+      })*/
 
       /*pool.foreach({ case (k, crit) =>
         redundancies.get(k) match {
@@ -133,8 +136,14 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
       
       // get maximum and save it
       var (maxi, max) = (-1, Float.NegativeInfinity)
-      for(i <- 0 until pool.length if pool(i).valid; sc = pool(i).score) {
+      /*for(i <- 0 until pool.length if pool(i).valid; sc = pool(i).score) {
         if(sc > max) maxi = i; max = sc
+      }*/
+      
+      for((k, (mi, cmi)) <- red if pool(k).valid) {
+        pool(k).update(mi.toFloat, cmi.toFloat)
+        val sc = pool(k).score
+        if(sc > max) maxi = k; max = sc
       }
       
       // select the best feature and remove from the whole set of features
@@ -245,10 +254,10 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
       }).reduceByKey(_ ++ _).persist(StorageLevel.MEMORY_ONLY)   
       val c2 = sparseData2.count()*/
       
-      /*val columnarData2 = sparseData.groupByKey(numPartitions = numPartitions)
-        .mapValues(a => TreeMap(a.toArray:_*))
+      val columnarData = sparseData.groupByKey(new HashPartitioner(numPartitions))
+        .mapValues(a => HashMap(a.toArray:_*))
         .persist(StorageLevel.MEMORY_ONLY)
-      val c3 = columnarData.count()*/
+      val c3 = columnarData.count()
       
       /*val columnarData2 = sparseData.groupByKey().mapValues({ a => 
           val sorted = a.toArray.sortBy(_._1)
@@ -261,11 +270,12 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
         }).persist(StorageLevel.MEMORY_ONLY)
       val c3 = columnarData2.count()*/
       
-      val columnarData = sparseData
-        .aggregateByKey(HashMap.empty[Long, Byte])({case (f, e) => f + e}, _ ++ _)
-        .sortByKey() // In order to increase the performance of lookups
+       // Partitioner in order to increase the performance of lookups
+      /*val columnarData = sparseData
+        .aggregateByKey(HashMap.empty[Long, Byte], new HashPartitioner(numPartitions))(
+            {case (f, e) => f + e}, _ ++ _)
         .persist(StorageLevel.MEMORY_ONLY)    
-      val c4 = columnarData.count()
+      val c4 = columnarData.count()*/
       nInstances = data.count()
       
       ColumnarData(null, columnarData, false)
