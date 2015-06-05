@@ -480,7 +480,7 @@ class MDLPDiscretizer private (val data: RDD[LabeledPoint]) extends Serializable
   }
 }
 
-object MDLPDiscretizer extends {
+object MDLPDiscretizer {
 
   /**
    * Train a entropy minimization discretizer given an RDD of LabeledPoints.

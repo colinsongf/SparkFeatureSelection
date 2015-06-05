@@ -67,7 +67,7 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
       nFeatures: Int) = {
     
     val label = nFeatures - 1
-    val (distinctByFeat, relevances) = if(data.isDense) {
+    /*val (distinctByFeat, relevances) = if(data.isDense) {
       val counterByKey = data.dense.mapValues({ case (_, v) => v.max + 1})
           .reduceByKey((m1, m2) => if(m1 > m2) m1 else m2)
           .collectAsMap()
@@ -87,7 +87,14 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
       val MiAndCmi = IT.computeMISparse(
         data.sparse, 0 until label, label, nInstances, nFeatures, counterByKey)
       (counterByKey, MiAndCmi)
-    }    
+    } */
+    val (it, relevances) = if(data.isDense) {
+      val it = InfoTheory2.initializeDense(data.dense, label, nInstances, nFeatures)
+      (it, it.relevances)
+    } else {
+      val it = InfoTheory2.initializeSparse(data.sparse, label, nInstances, nFeatures)
+      (it, it.relevances)
+    }
 
     // Init all (less output attribute) criterions to a bad score
     val pool = Array.fill[InfoThCriterion](nFeatures - 1) {
@@ -112,13 +119,18 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
     while (selected.size < nToSelect && moreFeat) {
       // update pool
       val ids = for (i <- 0 until pool.length if pool(i).valid) yield i
-      val redundancies = if(data.isDense) {        
+      val redundancies = it match {
+        case dit: InfoTheoryDense => dit.getRedundancies(ids, selected.head.feat)
+        case sit: InfoTheorySparse => sit.getRedundancies(ids, selected.head.feat)
+      }    
+      /*
+      if(data.isDense)
         IT.computeMIandCMI(data.dense, ids, selected.head.feat, 
           label, nInstances, nFeatures, distinctByFeat) // Maybe we can remove counter
       } else {
         IT.computeMIandCMISparse(data.sparse, ids, selected.head.feat, 
           label, nInstances, nFeatures)
-      }
+      }*/
       
       val red = redundancies.collect()
       
@@ -219,6 +231,7 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
       //val distinct = data.flatMap(_.features.asInstanceOf[SparseVector].indices).distinct().count()
       //val maxindex = data.flatMap(_.features.asInstanceOf[SparseVector].indices).max()
       val classMap = data.map(_.label).distinct.collect().zipWithIndex.toMap
+      nInstances = data.count()
       
       val sparseData = data.zipWithUniqueId.flatMap ({ case (lp, r) => 
           requireByteValues(lp.features)
@@ -276,7 +289,6 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
             {case (f, e) => f + e}, _ ++ _)
         .persist(StorageLevel.MEMORY_ONLY)    
       val c4 = columnarData.count()*/
-      nInstances = data.count()
       
       ColumnarData(null, columnarData, false)
     }
