@@ -49,7 +49,7 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
   // Case class for criterions by feature
   protected case class F(feat: Int, crit: Double) 
   private case class ColumnarData(dense: RDD[(Int, (Int, Array[Byte]))], 
-      sparse: RDD[(Int, HashMap[Long, Byte])],
+      sparse: RDD[(Int, Map[Long, Byte])],
       isDense: Boolean)
 
   /**
@@ -233,7 +233,8 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
       val classMap = data.map(_.label).distinct.collect().zipWithIndex.toMap
       nInstances = data.count()
       
-      val sparseData = data.zipWithUniqueId.flatMap ({ case (lp, r) => 
+      val indexed = data.zipWithUniqueId
+      val sparseData = indexed.flatMap ({ case (lp, r) => 
           requireByteValues(lp.features)
           val sv = lp.features.asInstanceOf[SparseVector]
           val output = (nFeatures - 1) -> (r, classMap(lp.label).toByte)
@@ -268,9 +269,18 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
       val c2 = sparseData2.count()*/
       
       val columnarData = sparseData.groupByKey(new HashPartitioner(numPartitions))
-        .mapValues(a => HashMap(a.toArray:_*))
+        .mapValues({ a =>
+          val map: Map[Long, Byte] = if(a.size != nInstances) {
+            HashMap(a.toArray:_*)
+          } else {
+            TreeMap(a.toArray:_*)
+          }
+          map
+        })
         .persist(StorageLevel.MEMORY_ONLY)
       val c3 = columnarData.count()
+      
+      //val classData = indexed.map({case (l, r) => r -> l}).sortByKey().collect()
       
       /*val columnarData2 = sparseData.groupByKey().mapValues({ a => 
           val sorted = a.toArray.sortBy(_._1)

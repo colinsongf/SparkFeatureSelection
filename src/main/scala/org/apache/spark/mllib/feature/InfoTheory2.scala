@@ -20,15 +20,14 @@ package org.apache.spark.mllib.feature
 import breeze.linalg._
 import breeze.numerics._
 import breeze.linalg.{DenseVector => BDV, SparseVector => BSV, Vector => BV, DenseMatrix => BDM}
-
 import scala.collection.immutable.HashMap
 import scala.collection.mutable
-
 import org.apache.spark.rdd.RDD
 import org.apache.spark.SparkContext._
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.SparkException
+import scala.collection.immutable.TreeMap
 
 /**
  * Information Theory function and distributed primitives.
@@ -36,7 +35,7 @@ import org.apache.spark.SparkException
 
 class InfoTheory2 extends Serializable {
   
-  protected def computeFrequency(data: HashMap[Long, Byte], nInstances: Long) = {
+  protected def computeFrequency(data: Map[Long, Byte], nInstances: Long) = {
     val tmp = data.values.groupBy(l => l).map(t => (t._1, t._2.size.toLong))
     tmp.get(0) match {
       case Some(_) => tmp
@@ -117,7 +116,7 @@ class InfoTheory2 extends Serializable {
 }
 
 class InfoTheorySparse (
-    val data: RDD[(Int, HashMap[Long, Byte])], 
+    val data: RDD[(Int, Map[Long, Byte])], 
     fixedFeat: Int,
     val nInstances: Long,      
     val nFeatures: Int) extends InfoTheory2 with Serializable {
@@ -133,6 +132,16 @@ class InfoTheorySparse (
   }
   
   // Broadcast Y vector
+  val fixedVal = data.filter({ case (k, _) => k == fixedFeat}).mapValues({ m =>
+    m match {
+      case tm: TreeMap[Long, Byte] => tm.valuesIterator.toArray
+      case hm: HashMap[Long, Byte] => 
+        val arr = Array.fill[Byte](nInstances.toInt)(0)
+        hm.map({ case (k, v) => arr(k.toInt) = v })
+        arr
+    }
+  })
+  
   val fixedCol = (fixedFeat, data.context.broadcast(data.lookup(fixedFeat)(0)))
   val fixedColHistogram = computeFrequency(fixedCol._2.value, nInstances)
   
@@ -187,8 +196,8 @@ class InfoTheorySparse (
  }
     
   private def computeHistogramsSparse(
-      filterData:  RDD[(Int, HashMap[Long, Byte])],
-      ycol: (Int, Broadcast[HashMap[Long, Byte]]),
+      filterData:  RDD[(Int, Map[Long, Byte])],
+      ycol: (Int, Broadcast[Map[Long, Byte]]),
       yhist: Map[Byte, Long],
       nInstances: Long) = {
     
@@ -214,8 +223,8 @@ class InfoTheorySparse (
   }
   
   private def computeConditionalHistogramsSparse(
-    filterData: RDD[(Int, HashMap[Long, Byte])],
-    ycol: (Int, HashMap[Long, Byte]),
+    filterData: RDD[(Int, Map[Long, Byte])],
+    ycol: (Int, Map[Long, Byte]),
     nInstances: Long) = {
     
       val bycol = filterData.context.broadcast(ycol._2)
@@ -388,7 +397,7 @@ class InfoTheoryDense (
 
 object InfoTheory2 {
   
-  def initializeSparse(data: RDD[(Int, HashMap[Long, Byte])], 
+  def initializeSparse(data: RDD[(Int, Map[Long, Byte])], 
     fixedFeat: Int,
     nInstances: Long,      
     nFeatures: Int) = {
