@@ -155,11 +155,13 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
       for((k, (mi, cmi)) <- red if pool(k).valid) {
         pool(k).update(mi.toFloat, cmi.toFloat)
         val sc = pool(k).score
-        if(sc > max) maxi = k; max = sc
+        if(sc > max){
+          maxi = k; max = sc
+        } 
       }
       
       // select the best feature and remove from the whole set of features
-      if(maxi != 1){
+      if(maxi != -1){
         selected = F(maxi, max) +: selected
         pool(maxi).setValid(false)
       } else {
@@ -228,13 +230,13 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
       ColumnarData(denseData, null, true)      
     } else {      
       
+      val nPart = if(numPartitions == 0) data.conf.getInt("spark.default.parallelism", 5) else numPartitions
       //val distinct = data.flatMap(_.features.asInstanceOf[SparseVector].indices).distinct().count()
       //val maxindex = data.flatMap(_.features.asInstanceOf[SparseVector].indices).max()
       val classMap = data.map(_.label).distinct.collect().zipWithIndex.toMap
       nInstances = data.count()
       
-      val indexed = data.zipWithUniqueId
-      val sparseData = indexed.flatMap ({ case (lp, r) => 
+      val sparseData = data.zipWithIndex().flatMap ({ case (lp, r) => 
           requireByteValues(lp.features)
           val sv = lp.features.asInstanceOf[SparseVector]
           val output = (nFeatures - 1) -> (r, classMap(lp.label).toByte)
@@ -268,7 +270,7 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
       }).reduceByKey(_ ++ _).persist(StorageLevel.MEMORY_ONLY)   
       val c2 = sparseData2.count()*/
       
-      val columnarData = sparseData.groupByKey(new HashPartitioner(numPartitions))
+      val columnarData = sparseData.groupByKey(new HashPartitioner(nPart))
         .mapValues({ a =>
           val map: Map[Long, Byte] = if(a.size != nInstances) {
             HashMap(a.toArray:_*)
