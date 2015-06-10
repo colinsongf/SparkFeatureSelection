@@ -34,6 +34,7 @@ import scala.collection.immutable.HashMap
 import breeze.linalg.{DenseVector => BDV, SparseVector => BSV, Vector => BV, DenseMatrix => BDM}
 import org.apache.spark.mllib.linalg.Vectors
 import org.apache.spark.HashPartitioner
+import scala.collection.immutable.BitSet
 
 /**
  * Train a info-theory feature selection model according to a criterion.
@@ -51,6 +52,77 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
   private case class ColumnarData(dense: RDD[(Int, (Int, Array[Byte]))], 
       sparse: RDD[(Int, Map[Long, Byte])],
       isDense: Boolean)
+      
+    /**
+   * Perform a info-theory selection process without pool optimization.
+   * 
+   * @param data Columnar data (last element is the class attribute).
+   * @param nToSelect Number of features to select.
+   * @return A list with the most relevant features and its scores.
+   * 
+   */
+  private[feature] def selectFeatures(
+      data: ColumnarData, 
+      nToSelect: Int,
+      nInstances: Long,
+      nFeatures: Int) = {
+    
+    val label = nFeatures - 1
+    val (it, relevances) = if(data.isDense) {
+      val it = InfoTheory2.initializeDense(data.dense, label, nInstances, nFeatures)
+      (it, it.relevances)
+    } else {
+      val it = InfoTheory2.initializeSparse(data.sparse, label, nInstances, nFeatures)
+      (it, it.relevances)
+    }
+    
+    object FeatOrdering extends Ordering[(Int, InfoThCriterion)] {
+      def compare(a:(Int, InfoThCriterion), b:(Int, InfoThCriterion)) = a._2.score compare b._2.score
+    }
+    
+    var pool = relevances.mapValues{ mi => criterionFactory.getCriterion.init(mi) }
+      .partitionBy(new HashPartitioner(100)).cache()
+    println("Maximum: " + relevances.max())
+    
+    // Print most relevant features
+    val strRels = pool.top(nToSelect)(FeatOrdering)
+      .map({case (f, crit) => (f + 1) + "\t" + "%.4f" format crit.score})
+      .mkString("\n")
+    println("\n*** MaxRel features ***\nFeature\tScore\n" + strRels) 
+    
+    // get maximum and select it
+    
+    val (mid, mcrit) = pool.max()(FeatOrdering)
+    var selected = Seq(F(mid, mcrit.score))
+    var moreFeat = true
+    
+    while (selected.size < nToSelect && moreFeat) {
+      // update pool
+      val redundancies = it match {
+        //case dit: InfoTheoryDense => dit.getRedundancies(ids, selected.head.feat)
+        case sit: InfoTheorySparse => sit.getRedundancies(selected.head.feat)
+      }
+      
+      val newpool = pool.leftOuterJoin(redundancies).mapValues({case (crit, upd) => 
+        upd match {
+          case Some((mi, cmi)) => crit.update(mi, cmi)
+          case None => crit
+        }  
+      }).cache()
+      
+      // get maximum and save it      
+      val bsel = BitSet(selected.map(_.feat):_*)
+      val (mid, mcrit) = newpool.filter({case (k, _) => !bsel.contains(k)}).max()(FeatOrdering)
+      selected = F(mid, mcrit.score) +: selected
+      if(bsel.size + 1 == nFeatures - 1) moreFeat = false
+      
+      pool.unpersist(false)
+      pool = newpool
+    }
+    pool.unpersist()
+    selected.reverse
+  }
+
 
   /**
    * Perform a info-theory selection process without pool optimization.
@@ -60,7 +132,7 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
    * @return A list with the most relevant features and its scores.
    * 
    */
-  private[feature] def selectFeatures(
+  /*private[feature] def selectFeatures(
       data: ColumnarData, 
       nToSelect: Int,
       nInstances: Long,
@@ -121,7 +193,7 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
       val ids = for (i <- 0 until pool.length if pool(i).valid) yield i
       val redundancies = it match {
         case dit: InfoTheoryDense => dit.getRedundancies(ids, selected.head.feat)
-        case sit: InfoTheorySparse => sit.getRedundancies(ids, selected.head.feat)
+        case sit: InfoTheorySparse => sit.getRedundancies(selected.head.feat)
       }    
       /*
       if(data.isDense)
@@ -169,7 +241,7 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
       }
     }
     selected.reverse
-  }
+  }*/
 
   private[feature] def run(
       data: RDD[LabeledPoint], 
@@ -230,13 +302,13 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
       ColumnarData(denseData, null, true)      
     } else {      
       
+      nInstances = data.count()
       val nPart = if(numPartitions == 0) data.conf.getInt("spark.default.parallelism", 5) else numPartitions
       //val distinct = data.flatMap(_.features.asInstanceOf[SparseVector].indices).distinct().count()
-      //val maxindex = data.flatMap(_.features.asInstanceOf[SparseVector].indices).max()
-      val classMap = data.map(_.label).distinct.collect().zipWithIndex.toMap
-      nInstances = data.count()
+      //val maxindex = data.flatMap(_.features.asInstanceOf[SparseVector].indices).max()      
+      val classMap = data.map(_.label).distinct.collect().zipWithIndex.toMap      
       
-      val sparseData = data.zipWithIndex().flatMap ({ case (lp, r) => 
+      val sparseData = data.zipWithUniqueId().flatMap ({ case (lp, r) => 
           requireByteValues(lp.features)
           val sv = lp.features.asInstanceOf[SparseVector]
           val output = (nFeatures - 1) -> (r, classMap(lp.label).toByte)
@@ -244,6 +316,7 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
             yield (sv.indices(i), (r, sv.values(i).toByte))
           output +: inputs           
       })
+      
       
       /*val sparseData2 = data.zipWithUniqueId().flatMap ({ case (lp, inst) =>        
         requireByteValues(lp.features)
@@ -280,7 +353,7 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
           map
         })
         .persist(StorageLevel.MEMORY_ONLY)
-      val c3 = columnarData.count()
+      //val c3 = columnarData.count()
       
       //val classData = indexed.map({case (l, r) => r -> l}).sortByKey().collect()
       
