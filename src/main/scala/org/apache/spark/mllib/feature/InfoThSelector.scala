@@ -61,7 +61,7 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
    * @return A list with the most relevant features and its scores.
    * 
    */
-  private[feature] def selectFeatures(
+  private[feature] def selectFeatures2(
       data: ColumnarData, 
       nToSelect: Int,
       nInstances: Long,
@@ -69,10 +69,10 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
     
     val label = nFeatures - 1
     val (it, relevances) = if(data.isDense) {
-      val it = InfoTheory2.initializeDense(data.dense, label, nInstances, nFeatures)
+      val it = InfoTheory.initializeDense(data.dense, label, nInstances, nFeatures)
       (it, it.relevances)
     } else {
-      val it = InfoTheory2.initializeSparse(data.sparse, label, nInstances, nFeatures)
+      val it = InfoTheory.initializeSparse(data.sparse, label, nInstances, nFeatures)
       (it, it.relevances)
     }
     
@@ -132,39 +132,18 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
    * @return A list with the most relevant features and its scores.
    * 
    */
-  /*private[feature] def selectFeatures(
+  private[feature] def selectFeatures(
       data: ColumnarData, 
       nToSelect: Int,
       nInstances: Long,
       nFeatures: Int) = {
     
     val label = nFeatures - 1
-    /*val (distinctByFeat, relevances) = if(data.isDense) {
-      val counterByKey = data.dense.mapValues({ case (_, v) => v.max + 1})
-          .reduceByKey((m1, m2) => if(m1 > m2) m1 else m2)
-          .collectAsMap()
-          .toMap
-        // calculate relevance
-      val MiAndCmi = IT.computeMI(
-        data.dense, 0 until label, label, nInstances, nFeatures, counterByKey)
-        (counterByKey, MiAndCmi)
-    } else {
-      //val nInstances = data.sparse.count() / nFeatures
-      val counterByKey: Map[Int, Int] = data.sparse
-        .mapValues(v => if(v.valuesIterator.isEmpty) 1 else v.valuesIterator.max + 1)
-        .collectAsMap()
-        .toMap
-      // calculate relevance
-      // println("Spare data: " + data.sparse.first()._2.toString())
-      val MiAndCmi = IT.computeMISparse(
-        data.sparse, 0 until label, label, nInstances, nFeatures, counterByKey)
-      (counterByKey, MiAndCmi)
-    } */
     val (it, relevances) = if(data.isDense) {
-      val it = InfoTheory2.initializeDense(data.dense, label, nInstances, nFeatures)
+      val it = InfoTheory.initializeDense(data.dense, label, nInstances, nFeatures)
       (it, it.relevances)
     } else {
-      val it = InfoTheory2.initializeSparse(data.sparse, label, nInstances, nFeatures)
+      val it = InfoTheory.initializeSparse(data.sparse, label, nInstances, nFeatures)
       (it, it.relevances)
     }
 
@@ -190,40 +169,16 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
     var moreFeat = true
     while (selected.size < nToSelect && moreFeat) {
       // update pool
-      val ids = for (i <- 0 until pool.length if pool(i).valid) yield i
+      //val ids = for (i <- 0 until pool.length if pool(i).valid) yield i
       val redundancies = it match {
-        case dit: InfoTheoryDense => dit.getRedundancies(ids, selected.head.feat)
+        case dit: InfoTheoryDense => dit.getRedundancies(selected.head.feat)
         case sit: InfoTheorySparse => sit.getRedundancies(selected.head.feat)
-      }    
-      /*
-      if(data.isDense)
-        IT.computeMIandCMI(data.dense, ids, selected.head.feat, 
-          label, nInstances, nFeatures, distinctByFeat) // Maybe we can remove counter
-      } else {
-        IT.computeMIandCMISparse(data.sparse, ids, selected.head.feat, 
-          label, nInstances, nFeatures)
-      }*/
+      }
       
-      val red = redundancies.collect()
-      
-      //val red = redundancies.collect()
-      /*.foreach({ case (k, (mi, cmi)) =>
-        pool(k).update(mi.toFloat, cmi.toFloat)
-      })*/
-
-      /*pool.foreach({ case (k, crit) =>
-        redundancies.get(k) match {
-          case Some((mi, cmi)) => crit.update(mi, cmi)
-          case None => /* Never happens */
-        }
-      })*/      
+      val red = redundancies.collect()     
       
       // get maximum and save it
-      var (maxi, max) = (-1, Float.NegativeInfinity)
-      /*for(i <- 0 until pool.length if pool(i).valid; sc = pool(i).score) {
-        if(sc > max) maxi = i; max = sc
-      }*/
-      
+      var (maxi, max) = (-1, Float.NegativeInfinity)      
       for((k, (mi, cmi)) <- red if pool(k).valid) {
         pool(k).update(mi.toFloat, cmi.toFloat)
         val sc = pool(k).score
@@ -241,7 +196,7 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
       }
     }
     selected.reverse
-  }*/
+  }
 
   private[feature] def run(
       data: RDD[LabeledPoint], 
@@ -280,6 +235,7 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
           + " At least, less than 2x nPartitions.")
       }
       
+      val classMap = data.map(_.label).distinct.collect().zipWithIndex.map(t => t._1 -> t._2.toByte).toMap
       val columnarData: RDD[(Int, (Int, Array[Byte]))] = data.mapPartitionsWithIndex({ (index, it) =>
         val data = it.toArray
         val mat = Array.ofDim[Byte](nFeatures, data.length)
@@ -287,7 +243,7 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
         for(reg <- data) {
           requireByteValues(reg.features)
           for(i <- 0 until reg.features.size) mat(i)(j) = reg.features(i).toByte
-          mat(reg.features.size)(j) = reg.label.toByte
+          mat(reg.features.size)(j) = classMap(reg.label)
           j += 1
         }
         val chunks = for(i <- 0 until nFeatures) yield (i -> (index, mat(i)))
@@ -304,76 +260,22 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
       
       nInstances = data.count()
       val nPart = if(numPartitions == 0) data.conf.getInt("spark.default.parallelism", 5) else numPartitions
-      //val distinct = data.flatMap(_.features.asInstanceOf[SparseVector].indices).distinct().count()
-      //val maxindex = data.flatMap(_.features.asInstanceOf[SparseVector].indices).max()      
-      val classMap = data.map(_.label).distinct.collect().zipWithIndex.toMap      
-      
-      val sparseData = data.zipWithUniqueId().flatMap ({ case (lp, r) => 
+      val classMap = data.map(_.label).distinct.collect().zipWithIndex.map(t => t._1 -> t._2.toByte).toMap
+      val sparseData = data.zipWithUniqueId.flatMap ({ case (lp, r) => 
           requireByteValues(lp.features)
           val sv = lp.features.asInstanceOf[SparseVector]
-          val output = (nFeatures - 1) -> (r, classMap(lp.label).toByte)
+          val output = (nFeatures - 1) -> (r, classMap(lp.label))
           val inputs = for(i <- 0 until sv.indices.length) 
             yield (sv.indices(i), (r, sv.values(i).toByte))
           output +: inputs           
       })
       
-      
-      /*val sparseData2 = data.zipWithUniqueId().flatMap ({ case (lp, inst) =>        
-        requireByteValues(lp.features)
-        val v = lp.features.asInstanceOf[SparseVector]
-        val inputs = (0 until v.indices.length).map({ i =>            
-          (v.indices(i), inst) -> v.values(i).toByte   
-        })
-        val output = (nFeatures - 1, inst) -> classMap(lp.label).toByte
-        output +: inputs      
-      }).sortByKey().persist(StorageLevel.MEMORY_ONLY)   
-      val c2 = sparseData2.count()*/
-      
-      /*val sparseData2 = data.zipWithUniqueId().mapPartitions ({ it =>        
-        val featCols = Array.fill(nFeatures){ HashMap[Long, Byte]() }
-        for ((lp, inst) <- it) {
-          requireByteValues(lp.label, lp.features)
-          featCols(nFeatures - 1) += inst -> classMap(lp.label).toByte
-          val v = lp.features.asInstanceOf[SparseVector]
-          (0 until v.indices.length).map({ i =>            
-            featCols(v.indices(i)) += inst -> v.values(i).toByte   
-          })          
-        }
-        featCols.zipWithIndex.map({case (col, idx) => (idx, col)}).toIterator            
-      }).reduceByKey(_ ++ _).persist(StorageLevel.MEMORY_ONLY)   
-      val c2 = sparseData2.count()*/
-      
       val columnarData = sparseData.groupByKey(new HashPartitioner(nPart))
-        .mapValues({ a =>
-          val map: Map[Long, Byte] = if(a.size != nInstances) {
-            HashMap(a.toArray:_*)
-          } else {
-            TreeMap(a.toArray:_*)
-          }
-          map
+        .mapValues({a => 
+          val hm: Map[Long, Byte] = HashMap(a.toArray:_*)
+          hm
         })
         .persist(StorageLevel.MEMORY_ONLY)
-      //val c3 = columnarData.count()
-      
-      //val classData = indexed.map({case (l, r) => r -> l}).sortByKey().collect()
-      
-      /*val columnarData2 = sparseData.groupByKey().mapValues({ a => 
-          val sorted = a.toArray.sortBy(_._1)
-          val vector: BV[Byte] = if(a.size > nInstances / 2){
-            new BDV(sorted.map(_._2.toByte))
-          } else {   
-            new BSV(sorted.map(_._1.toInt), sorted.map(_._2.toByte), nInstances.toInt)
-          }   
-          vector
-        }).persist(StorageLevel.MEMORY_ONLY)
-      val c3 = columnarData2.count()*/
-      
-       // Partitioner in order to increase the performance of lookups
-      /*val columnarData = sparseData
-        .aggregateByKey(HashMap.empty[Long, Byte], new HashPartitioner(numPartitions))(
-            {case (f, e) => f + e}, _ ++ _)
-        .persist(StorageLevel.MEMORY_ONLY)    
-      val c4 = columnarData.count()*/
       
       ColumnarData(null, columnarData, false)
     }

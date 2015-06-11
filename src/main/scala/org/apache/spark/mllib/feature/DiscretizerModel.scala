@@ -108,7 +108,7 @@ class DiscretizerModel (val thresholds: Array[Array[Float]]) extends VectorTrans
    */
   override def transform(data: RDD[Vector]) = {
     val bc_thresholds = data.context.broadcast(thresholds)    
-    data.map {
+    val result = data.map {
       case v: SparseVector =>
         val newValues = for (i <- 0 until v.indices.length) 
           yield assignDiscreteValue(v.values(i), bc_thresholds.value(v.indices(i))).toDouble
@@ -121,7 +121,9 @@ class DiscretizerModel (val thresholds: Array[Array[Float]]) extends VectorTrans
           val newValues = for (i <- 0 until v.values.length)
             yield assignDiscreteValue(v(i), bc_thresholds.value(i)).toDouble         
           Vectors.dense(newValues.toArray)
-    }    
+    }  
+    bc_thresholds.unpersist()
+    result
   }
 
   /**
