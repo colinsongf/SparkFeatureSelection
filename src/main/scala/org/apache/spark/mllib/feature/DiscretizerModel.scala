@@ -33,56 +33,6 @@ import org.apache.spark.annotation.Experimental
 @Experimental
 class DiscretizerModel (val thresholds: Array[Array[Float]]) extends VectorTransformer {
   
-  //require(isSorted(thresholds.map(_._1)), "Array has to be sorted asc")
-  
-  /*protected def isSorted(array: Array[Int]): Boolean = {
-    var i = 1
-    while (i < array.length) {
-      if (array(i) < array(i-1)) return false
-      i += 1
-    }
-    true
-  }
-  
-  /**
-   * Discretizes values for a single example using thresholds.
-   *
-   * @param data Vector.
-   * @return Discretized vector (with bins from 1 to n).
-   */
-  override def transform(data: Vector) = {
-    data match {
-      case v: SparseVector =>
-        var newValues = Array.empty[Double]
-        var j = 0
-        for (i <- 0 until v.indices.length){
-          val tmpj = thresholds.indexWhere({case (idx, _) => v.indices(i) == idx}, j)
-          if (tmpj != -1) {
-            newValues = assignDiscreteValue(v(i), thresholds(tmpj)._2).toDouble +: newValues
-            j = tmpj
-          } else {                  
-            newValues = v(i) +: newValues
-          }
-        }
-        // the `index` array inside sparse vector object will not be changed
-        Vectors.sparse(v.size, v.indices, newValues.reverse)
-        
-        case v: DenseVector =>
-          var newValues = Array.empty[Double]
-          var j = 0
-          for (i <- 0 until v.values.length){
-            val tmpj = thresholds.indexWhere({case (idx, _) => i == idx}, j)
-            if (tmpj != -1) {
-              newValues = assignDiscreteValue(v.values(i), thresholds(tmpj)._2).toDouble +: newValues
-              j = tmpj
-            } else {                  
-              newValues = v.values(i) +: newValues
-            }
-          }          
-          Vectors.dense(newValues.reverse)
-    }    
-  }*/
-  
   override def transform(data: Vector) = {
     data match {
       case v: SparseVector =>
