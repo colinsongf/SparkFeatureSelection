@@ -48,7 +48,7 @@ class DiscretizerModel (val thresholds: Array[Array[Float]]) extends VectorTrans
             yield assignDiscreteValue(v(i), thresholds(i)).toDouble         
           Vectors.dense(newValues.toArray)
     }    
-  }
+  } 
   
   /**
    * Discretizes values in a given dataset using thresholds.
