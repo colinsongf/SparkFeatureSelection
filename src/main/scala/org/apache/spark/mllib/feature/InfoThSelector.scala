@@ -50,7 +50,7 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
   // Case class for criterions by feature
   protected case class F(feat: Int, crit: Double) 
   private case class ColumnarData(dense: RDD[(Int, (Int, Array[Byte]))], 
-      sparse: RDD[(Int, Map[Long, Byte])],
+      sparse: RDD[(Int, BV[Byte])],
       isDense: Boolean)
       
     /**
@@ -259,9 +259,9 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
     } else {      
       
       nInstances = data.count()
-      val nPart = if(numPartitions == 0) data.conf.getInt("spark.default.parallelism", 5) else numPartitions
+      val nPart = if(numPartitions == 0) data.conf.getInt("spark.default.parallelism", 400) else numPartitions
       val classMap = data.map(_.label).distinct.collect().zipWithIndex.map(t => t._1 -> t._2.toByte).toMap
-      val sparseData = data.zipWithUniqueId.flatMap ({ case (lp, r) => 
+      val sparseData = data.zipWithIndex().flatMap ({ case (lp, r) => 
           requireByteValues(lp.features)
           val sv = lp.features.asInstanceOf[SparseVector]
           val output = (nFeatures - 1) -> (r, classMap(lp.label))
@@ -272,8 +272,17 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
       
       val columnarData = sparseData.groupByKey(new HashPartitioner(nPart))
         .mapValues({a => 
-          val hm: Map[Long, Byte] = HashMap(a.toArray:_*)
-          hm
+          if(a.size >= nInstances) {
+            val init = Array.fill[Byte](nInstances.toInt)(0)
+            val result: BV[Byte] = new BDV(init)
+            a.foreach({case (k, v) => result(k.toInt) = v})
+            result
+            //val result: BV[Byte] = new BDV(a.toArray.sortBy(_._1).map(_._2))
+            //result
+          } else {
+            val init = a.toArray.sortBy(_._1)
+            new BSV(init.map(_._1.toInt), init.map(_._2), nInstances.toInt)
+          }
         })
         .persist(StorageLevel.MEMORY_ONLY)
       
