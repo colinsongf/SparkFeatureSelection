@@ -9,14 +9,16 @@ import org.apache.spark.SparkConf
 import org.apache.spark.SparkContext
 import org.ugr.sci2s.mllib.test.{MLExperimentUtils => MLEU}
 import org.apache.spark.mllib.feature._
+import breeze.linalg.SparseVector
+import breeze.linalg.DenseVector
+import breeze.linalg.Vector
 
 class MLlibRegistrator extends KryoRegistrator {
   override def registerClasses(kryo: Kryo) {
-    kryo.register(classOf[Double])
-    kryo.register(classOf[Array[Double]])
-    kryo.register(classOf[Byte])
-    kryo.register(classOf[Array[Byte]])
     kryo.register(classOf[LabeledPoint])    
+    kryo.register(classOf[SparseVector[Byte]])    
+    kryo.register(classOf[DenseVector[Byte]])  
+    kryo.register(classOf[Vector[Byte]])  
   }
 }
 
