@@ -76,59 +76,7 @@ object MLExperimentUtils {
 	  		val stddev = Math.sqrt(devs.reduce(_ + _) / devs.length)
 	  		(mean, stddev)
 		}
-		
-		@Experimental
-		private def doTraining (training: (RDD[LabeledPoint]) => ClassificationModelAdapter, isBinary: Boolean,
-		    data: RDD[LabeledPoint]) {
-			if(isBinary) training(data)
-			else OVATraining(training, data)
-		}
-		
-		@Experimental
-		private def OVATraining (training: (RDD[LabeledPoint]) => ClassificationModelAdapter, 
-		    data: RDD[LabeledPoint]): Array[(Double, Option[ClassificationModelAdapter])] = {
-			// Histogram of labels
-			val classHist = data.map(point => (point.label, 1L)).reduceByKey(_ + _).collect.sortBy(_._2)
-				
-			def toBinary = (point: LabeledPoint, label: Double) => {
-				val cls = if (point.label == label) positive else negative
-				new LabeledPoint(cls, point.features)
-			}
-			
-			// We train models for each class except for the majority one
-			val ovaModels: Array[(Double, Option[ClassificationModelAdapter])] = 
-			  classHist.dropRight(1).map{ case (label, count) => {
-					val binaryTr = data.map (toBinary(_, label))
-					val oneModel = training(binaryTr)
-					(label, Some(oneModel))
-				}
-			}
-			
-			// return the class labels and the binary classifier derived from each one
-			val lastElem = Array((classHist.last._1, None: Option[ClassificationModelAdapter]))
-			ovaModels ++ lastElem		
-		}
-		
-		@Experimental
-		private def computeOVAPredictions (ovaModels: Array[(Double, Option[ClassificationModelAdapter])], 
-		    test: RDD[LabeledPoint], threshold: Double = 1.0): RDD[(Double, Double)] = {
-		  
-			def recursiveOVA (point: LabeledPoint, index: Int): Double = {
-			  val (label, model) = ovaModels(index)
-			  model match {
-			  	case Some(m: ClassificationModelAdapter) =>
-			  	  	val prediction = if(m.predict(point.features) >= threshold) positive else negative
-			  	  	if (prediction == negative) recursiveOVA(point, index + 1) else label
-			  	case None => ovaModels.last._1
-			  }
-			}
-			
-			test.map{point => {
-			  (point.label, recursiveOVA(point, 0))} 
-			}
-			
-		}
-		
+    
 		private def discretization(
 				discretize: (RDD[LabeledPoint]) => DiscretizerModel, 
 				train: RDD[LabeledPoint], 
@@ -241,7 +189,7 @@ object MLExperimentUtils {
 			} catch {
 				case iie: org.apache.hadoop.mapred.InvalidInputException =>
 					val initStartTime = System.nanoTime()
-          val fstrain = train.cache()
+          val fstrain = train.repartition(450).persist(StorageLevel.MEMORY_ONLY_SER)
           val c = fstrain.count()
           
 					val featureSelector = fs(fstrain)
@@ -300,7 +248,7 @@ object MLExperimentUtils {
 				(traValuesAndPreds, tstValuesAndPreds, classifficationTime)
 			} catch {
 				case iie: org.apache.hadoop.mapred.InvalidInputException => 
-          val ctrain = train.cache()
+          val ctrain = train.persist(StorageLevel.MEMORY_ONLY_SER)
           val nInstances = ctrain.count() // to persist train and not to affect time measurements
 					val initStartTime = System.nanoTime()	
 					val classificationModel = classify(ctrain)
@@ -365,6 +313,7 @@ object MLExperimentUtils {
 		          case s if s matches "(?i)LibSVM" => 
 		            (filePath: String) => {
 		              val svmData = MLUtils.loadLibSVMFile(sc, filePath)
+                  svmData.unpersist()
 		              val data = if(samplingRate < 1.0) svmData.sample(false, samplingRate) else svmData
 		              if(dense) {
 		                data.map{case LabeledPoint(label, features) => 
