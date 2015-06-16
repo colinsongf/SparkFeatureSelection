@@ -298,13 +298,15 @@ class InfoTheoryDense (
     
   def getRelevances(varY: Int) = relevances
   
-  def getRedundancies(varY: Int) = {    
+  def getRedundancies(
+      varX: Seq[Int],
+      varY: Int) = {    
     
     // Pre-requisites
-    //require(varX.size > 0)
+    require(varX.size > 0)
 
     // Broadcast variables
-    /*val filterData = {
+    val filterData = {
       val sc = data.context
       // A boolean vector that indicates the variables involved on this computation
       val fselected = Array.ofDim[Boolean](nFeatures)
@@ -313,10 +315,10 @@ class InfoTheoryDense (
       val bFeatSelected = sc.broadcast(fselected)
       // Filter data by these variables
       data.filter({ case (k, _) => bFeatSelected.value(k)})
-    }*/
+    }
     
     // Prepare Y and Z vector
-    val yvals = data.lookup(varY)
+    val yvals = filterData.lookup(varY)
     var ycol = Array.ofDim[Array[Byte]](yvals.length)
     yvals.foreach({ case (b, v) => ycol(b) = v })
     val (varZ, _) = fixedCol
@@ -324,7 +326,7 @@ class InfoTheoryDense (
     // Compute conditional histograms for all variables
     // Then, we remove those not present in X set
     val histograms3d = computeConditionalHistograms(
-        data, (varY, ycol), fixedCol)
+        filterData, (varY, ycol), fixedCol)
         .filter{case (k, _) => k != varZ && k != varY}
       
     // Compute CMI and MI for all X variables
