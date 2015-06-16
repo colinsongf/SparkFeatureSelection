@@ -251,7 +251,7 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
       })      
       // Sort to group all chunks for the same feature closely. It will avoid to shuffle too much histograms
       val denseData = columnarData.sortByKey(numPartitions = nPart).persist(StorageLevel.MEMORY_ONLY)
-      val c = denseData.count() // Important to cache the data!
+      //val c = denseData.count() // Important to cache the data!
       //println("Number of chunks: " + c)
       
       nInstances = denseData.lookup(0).map(_._2.length).reduce(_ + _)
