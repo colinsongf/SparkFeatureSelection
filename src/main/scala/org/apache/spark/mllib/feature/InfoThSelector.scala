@@ -81,8 +81,7 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
     }
     
     var pool = relevances.mapValues{ mi => criterionFactory.getCriterion.init(mi) }
-      .partitionBy(new HashPartitioner(100)).cache()
-    println("Maximum: " + relevances.max())
+      .partitionBy(new HashPartitioner(400)).cache()
     
     // Print most relevant features
     val strRels = pool.top(nToSelect)(FeatOrdering)
@@ -252,15 +251,13 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
       })      
       // Sort to group all chunks for the same feature closely. It will avoid to shuffle too much histograms
       val denseData = columnarData.sortByKey(numPartitions = nPart).persist(StorageLevel.MEMORY_ONLY)
-      //val c = denseData.count() // Important to cache the data!
-      //println("Number of chunks: " + c)
       
       nInstances = denseData.lookup(0).map(_._2.length).reduce(_ + _)
       ColumnarData(denseData, null, true)      
     } else {      
       
       nInstances = data.count()
-      val nPart = if(numPartitions == 0) data.conf.getInt("spark.default.parallelism", 400) else numPartitions
+      val nPart = if(numPartitions == 0) data.conf.getInt("spark.default.parallelism", 750) else numPartitions
       val classMap = data.map(_.label).distinct.collect().zipWithIndex.map(t => t._1 -> t._2.toByte).toMap
       val sparseData = data.zipWithIndex().flatMap ({ case (lp, r) => 
           requireByteValues(lp.features)
@@ -278,8 +275,6 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
             val result: BV[Byte] = new BDV(init)
             a.foreach({case (k, v) => result(k.toInt) = v})
             result
-            //val result: BV[Byte] = new BDV(a.toArray.sortBy(_._1).map(_._2))
-            //result
           } else {
             val init = a.toArray.sortBy(_._1)
             new BSV(init.map(_._1.toInt), init.map(_._2), nInstances.toInt)

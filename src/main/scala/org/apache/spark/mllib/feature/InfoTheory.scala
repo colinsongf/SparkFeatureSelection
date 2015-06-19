@@ -28,6 +28,7 @@ import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.SparkException
 import scala.collection.immutable.TreeMap
+import org.apache.spark.HashPartitioner
 
 /**
  * Information Theory function and distributed primitives.
@@ -102,8 +103,7 @@ class InfoTheory extends Serializable {
         }
       } 
       (mi.toFloat, cmi.toFloat)        
-    })  
-    yProb.unpersist(); zProb.unpersist(); yzProb.unpersist()
+    })
     result
   }
   
@@ -114,19 +114,7 @@ class InfoTheorySparse (
     fixedFeat: Int,
     val nInstances: Long,      
     val nFeatures: Int) extends InfoTheory with Serializable {
-    
-  // Store counter for future iterations
-  //val counterByFeat = data.context.broadcast(classCounter)
-  val counterByFeat = {
-    val counterData = data.mapValues(
-        v => if(v.valuesIterator.isEmpty) 1 else v.valuesIterator.max + 1)
-      .collect()
-    val counterByKey = Array.fill(nFeatures)(256)
-    counterData.foreach({case (k, v) => counterByKey(k) = v})
-    data.context.broadcast(counterByKey)
-  }
   
-  val maxID = data.lookup(nFeatures - 1)(0).keySet.max
   // Broadcast Y vector
   val fixedVal = data.lookup(fixedFeat)(0)
   
@@ -136,8 +124,12 @@ class InfoTheorySparse (
   val (marginalProb, jointProb, relevances) = {
     val histograms = computeHistograms(data, 
       fixedCol, fixedColHistogram)
-    val jointTable = histograms.mapValues(_.map(_.toFloat / nInstances)).cache()
-    val marginalTable = jointTable.mapValues(h => sum(h(*, ::)).toDenseVector).cache()
+    val jointTable = histograms.mapValues(_.map(_.toFloat / nInstances))
+      .partitionBy(new HashPartitioner(400))
+      .cache()
+    val marginalTable = jointTable.mapValues(h => sum(h(*, ::)).toDenseVector)
+      .partitionBy(new HashPartitioner(400))
+      .cache()
     
     // Remove output feature from the computations
     val label = nFeatures - 1 
@@ -148,7 +140,7 @@ class InfoTheorySparse (
   }
     
   private def computeFrequency(data: BV[Byte], nInstances: Long) = {
-    val tmp = data.toArray.groupBy(l => l).map(t => (t._1, t._2.size.toLong))
+    val tmp = data.activeValuesIterator.toArray.groupBy(l => l).map(t => (t._1, t._2.size.toLong))
     val lastElem = (0: Byte, nInstances - tmp.filter({case (v, _) => v != 0}).values.sum)
     tmp + lastElem
   }
@@ -157,10 +149,7 @@ class InfoTheorySparse (
   
   def getRedundancies(
       //varX: Seq[Int],
-      varY: Int) = {    
-    
-    // Pre-requisites
-    //require(varX.size > 0)
+      varY: Int) = {
     
     // Prepare Y and Z vector
     val ycol = data.lookup(varY)(0)
@@ -195,12 +184,11 @@ class InfoTheorySparse (
       yhist: Map[Byte, Long]) = {
     
     val bycol = ycol._2
-    val counter = counterByFeat
-    val ys = counter.value(ycol._1)
+    val ys = ycol._2.value.activeValuesIterator.max + 1
       
-    filterData.map({ case (feat, xcol) =>        
-      val result = BDM.zeros[Long](
-          counter.value(feat), ys)
+    filterData.map({ case (feat, xcol) =>  
+      val xs = xcol.activeValuesIterator.max + 1
+      val result = BDM.zeros[Long](xs, ys)
       
       val histCls = mutable.HashMap.empty ++= yhist // clone
       for ((inst, x) <- xcol.activeIterator){
@@ -218,45 +206,47 @@ class InfoTheorySparse (
     filterData: RDD[(Int, BV[Byte])],
     ycol: (Int, BV[Byte])) = {
     
-      //val arr = Array.fill[Byte](maxID.toInt + 1)(0)
-      //ycol._2.map({ case (k, v) => arr(k.toInt) = v })
-      //val bycol = filterData.context.broadcast(arr)
-      val bycol = filterData.context.broadcast(ycol._2)
+      val bycol = filterData.context.broadcast(ycol._2)      
+      val yhist = new mutable.HashMap[(Byte, Byte), Long]()
+      ycol._2.activeIterator.foreach({case (inst, y) => 
+          val z = fixedCol._2.value(inst)
+          yhist += (y, z) -> (yhist.getOrElse((y, z), 0L) + 1)
+      })
+      val byhist = filterData.context.broadcast(yhist)
       val bzcol = fixedCol._2
-      val counter = counterByFeat
-      val zhist = fixedColHistogram
-      val ys = counter.value(ycol._1)
-      val zs = counter.value(fixedCol._1)
+      val bzhist = fixedColHistogram
+      val ys = ycol._2.activeValuesIterator.max + 1
+      val zs = fixedCol._2.value.activeValuesIterator.max + 1
       
-      val result = filterData.map({ case (feat, xcol) =>        
+      val result = filterData.map({ case (feat, xcol) =>     
+        val xs = xcol.activeValuesIterator.max + 1
         val result = BDV.fill[BDM[Long]](zs){
-          BDM.zeros[Long](counter.value(feat), ys)
+          BDM.zeros[Long](xs, ys)
         }
         
-        // Elements appearing in X
-        val histCls = mutable.HashMap.empty ++= zhist // clone
+        // All elements in X appearing in Y        
+        val yzhist = mutable.HashMap.empty ++= byhist.value
         for ((inst, x) <- xcol.activeIterator){     
           //val y = bycol.value.getOrElse(inst, 0: Byte)
           val y = bycol.value(inst)
+          //val y = 0: Byte
           val z = bzcol.value(inst)        
-          histCls += z -> (histCls(z) - 1)
+          //histCls += z -> (histCls(z) - 1)
+          if(y != 0) yzhist += (y, z) -> (yzhist((y,z)) - 1)
           result(z)(xcol(inst), y) += 1
         }
         
-        // The remaining elements in Y but not in X
-        for((inst, y) <- bycol.value.activeIterator) {
-         if (y != 0 && xcol(inst) == 0) {
-           val z = bzcol.value(inst)          
-           histCls += z -> (histCls(z) - 1)
-           result(z)(0, y) += 1
-         }
-        }
+        // Non-zero elements in Y, not appearing in X
+        yzhist.foreach({case ((y, z), q) => result(z)(0, y) += q})
         
-        // Zeros count
-        histCls.foreach({ case (c, q) => result(c)(0, 0) += q })
+        // X and Y zero elements
+        bzhist.map({ case (zval, _) => 
+          val rest = bzhist(zval) - sum(result(zval))
+          result(zval)(0, 0) += rest
+        })
+        
         feat -> result
     })
-    bycol.unpersist()
     result
   }
 }
@@ -286,8 +276,12 @@ class InfoTheoryDense (
   
   val (marginalProb, jointProb, relevances) = {
     val histograms = computeHistograms(data, fixedCol)
-    val jointTable = histograms.mapValues(_.map(_.toFloat / nInstances)).cache()
-    val marginalTable = jointTable.mapValues(h => sum(h(*, ::)).toDenseVector).cache()
+    val jointTable = histograms.mapValues(_.map(_.toFloat / nInstances))
+      .partitionBy(new HashPartitioner(400))
+      .cache()
+    val marginalTable = jointTable.mapValues(h => sum(h(*, ::)).toDenseVector)
+      .partitionBy(new HashPartitioner(400))
+      .cache()
     
     // Remove output feature from the computations
     val fdata = histograms.filter{case (k, _) => k != fixedFeat}
