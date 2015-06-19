@@ -170,8 +170,8 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
       // update pool
       val redundancies = it match {
         case dit: InfoTheoryDense => 
-          val ids = for (i <- 0 until pool.length if pool(i).valid) yield i
-          dit.getRedundancies(ids, selected.head.feat)
+          //val ids = for (i <- 0 until pool.length if pool(i).valid) yield i
+          dit.getRedundancies(selected.head.feat)
         case sit: InfoTheorySparse => sit.getRedundancies(selected.head.feat)
       }
       
@@ -250,7 +250,7 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
         chunks.toIterator
       })      
       // Sort to group all chunks for the same feature closely. It will avoid to shuffle too much histograms
-      val denseData = columnarData.sortByKey(numPartitions = nPart).persist(StorageLevel.MEMORY_ONLY)
+      val denseData = columnarData.sortByKey(numPartitions = 1240).persist(StorageLevel.MEMORY_ONLY)
       
       nInstances = denseData.lookup(0).map(_._2.length).reduce(_ + _)
       ColumnarData(denseData, null, true)      
