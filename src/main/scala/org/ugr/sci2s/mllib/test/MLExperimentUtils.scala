@@ -189,7 +189,7 @@ object MLExperimentUtils {
 			} catch {
 				case iie: org.apache.hadoop.mapred.InvalidInputException =>
 					val initStartTime = System.nanoTime()
-          val fstrain = train.repartition(800).persist(StorageLevel.MEMORY_ONLY_SER)
+          val fstrain = train.repartition(750).persist(StorageLevel.MEMORY_ONLY_SER)
           val c = fstrain.count()
           
 					val featureSelector = fs(fstrain)
