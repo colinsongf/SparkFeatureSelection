@@ -46,7 +46,7 @@ object MLExperimentUtils {
   		
   		private def parseSelectedAtts (str: String) = {
         val tokens = str split "\t"
-        (tokens(0).toInt, tokens(1).toDouble)
+        tokens(0).toInt
   		}
   		
   		private def parsePredictions(str: String) = {
@@ -169,7 +169,7 @@ object MLExperimentUtils {
 			try {
 				val selectedAtts = sc.textFile(outputDir + "/fs_scheme_" + iteration).filter(!_.isEmpty())
 										.map(parseSelectedAtts).collect				
-				val featureSelector = new SelectorModel(selectedAtts.map(_._1))
+				val featureSelector = new SelectorModel(selectedAtts.sorted)
 				
 				val FSTime = sc.textFile(outputDir + "/fs_time_" + iteration)
 						.filter(!_.isEmpty())
