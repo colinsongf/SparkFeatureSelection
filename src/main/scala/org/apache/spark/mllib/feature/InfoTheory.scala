@@ -55,8 +55,7 @@ class InfoTheory extends Serializable {
         }
       } 
       mi.toFloat        
-    }) 
-    byProb.unpersist()
+    })
     result
   }
   
@@ -227,9 +226,7 @@ class InfoTheorySparse (
         // All elements in X appearing in Y        
         val yzhist = mutable.HashMap.empty ++= byhist.value
         for ((inst, x) <- xcol.activeIterator){     
-          //val y = bycol.value.getOrElse(inst, 0: Byte)
           val y = bycol.value(inst)
-          //val y = 0: Byte
           val z = bzcol.value(inst)        
           //histCls += z -> (histCls(z) - 1)
           if(y != 0) yzhist += (y, z) -> (yzhist((y,z)) - 1)
@@ -247,6 +244,7 @@ class InfoTheorySparse (
         
         feat -> result
     })
+    bycol.unpersist()
     result
   }
 }
@@ -357,13 +355,12 @@ class InfoTheoryDense (
     zcol: (Int, Broadcast[Array[Array[Byte]]])) = {
     
       val bycol = data.context.broadcast(ycol._2)
-      //val bzcol = data.context.broadcast(zcol._2)
       val bzcol = zcol._2
-      val bcounter = counterByFeat
+      val bcounter = counterByFeat // In order to avoid serialize the whole object
       val ys = counterByFeat.value.getOrElse(ycol._1, 256)
       val zs = counterByFeat.value.getOrElse(zcol._1, 256)
       
-      data.mapPartitions({ it =>
+      val result = data.mapPartitions({ it =>
         var result = Map.empty[Int, BDV[BDM[Long]]]
         for((feat, (block, arr)) <- it) {
           // We create a vector (z) of matrices (x,y) to represent a 3-dim matrix
@@ -378,7 +375,11 @@ class InfoTheoryDense (
         }
         result.toIterator
       }).reduceByKey(_ + _)
+      
+      bycol.unpersist()
+      result
   }
+  
 }
 
 object InfoTheory {
