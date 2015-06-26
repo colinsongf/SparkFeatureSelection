@@ -175,21 +175,25 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
         case sit: InfoTheorySparse => sit.getRedundancies(selected.head.feat)
       }
       
-      val red = redundancies.collect()     
+      redundancies.collect().par.foreach({case (k, (mi, cmi)) =>
+         pool(k).update(mi.toFloat, cmi.toFloat) 
+      })   
       
       // get maximum and save it
-      var (maxi, max) = (-1, Float.NegativeInfinity)      
+      /*var (maxi, max) = (-1, Float.NegativeInfinity)      
       for((k, (mi, cmi)) <- red if pool(k).valid) {
         pool(k).update(mi.toFloat, cmi.toFloat)
         val sc = pool(k).score
         if(sc > max){
           maxi = k; max = sc
         } 
-      }
+      }*/
+      
+      val (max, maxi) = pool.par.zipWithIndex.filter(_._1.valid).maxBy(_._1)
       
       // select the best feature and remove from the whole set of features
       if(maxi != -1){
-        selected = F(maxi, max) +: selected
+        selected = F(maxi, max.score) +: selected
         pool(maxi).setValid(false)
       } else {
         moreFeat = false
@@ -224,7 +228,7 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
         
     val first = data.first
     val dense = first.features.isInstanceOf[DenseVector]    
-    var nInstances = 0L
+    val nInstances = data.count()
     val nFeatures = first.features.size + 1
     
     val colData = if(dense) {
@@ -250,13 +254,12 @@ class InfoThSelector private[feature] (val criterionFactory: FT) extends Seriali
         chunks.toIterator
       })      
       // Sort to group all chunks for the same feature closely. It will avoid to shuffle too much histograms
-      val denseData = columnarData.sortByKey(numPartitions = 1240).persist(StorageLevel.MEMORY_ONLY)
+      val denseData = columnarData.sortByKey(numPartitions = nPart).persist(StorageLevel.MEMORY_ONLY)
       
-      nInstances = denseData.lookup(0).map(_._2.length).reduce(_ + _)
+      //nInstances = denseData.lookup(0).map(_._2.length).reduce(_ + _)
       ColumnarData(denseData, null, true)      
     } else {      
       
-      nInstances = data.count()
       val nPart = if(numPartitions == 0) data.conf.getInt("spark.default.parallelism", 750) else numPartitions
       val classMap = data.map(_.label).distinct.collect().zipWithIndex.map(t => t._1 -> t._2.toByte).toMap
       val sparseData = data.zipWithIndex().flatMap ({ case (lp, r) => 
