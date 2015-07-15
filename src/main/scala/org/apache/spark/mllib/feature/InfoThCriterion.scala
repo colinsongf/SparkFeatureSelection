@@ -68,32 +68,54 @@ trait InfoThCriterion extends Serializable with Ordered[InfoThCriterion] {
    * Returns the value of the criterion for in a precise moment.
    */
   def score: Float
-  
-  
+}
 
+
+/**
+ * Mutual Information Maximisation (MIM)
+ */
+class Mim extends InfoThCriterion {
+
+  override def score = relevance
+  
+  override def init(relevance: Float): InfoThCriterion = {
+    this.setRelevance(relevance)
+  }
+  
+  override def update(mi: Float = 0.0f, cmi: Float = 0.0f): InfoThCriterion = this
+  override def toString: String = "MIM"
 }
 
 /**
- * A special type of criterion which can be bounden for optimization.
+ * Mutual Information FS (MIFS)
  */
-trait Bound extends Serializable { self: InfoThCriterion =>
+class Mifs (val beta: Float = 0.0f) extends InfoThCriterion {
 
-  /**
-   * Returns the maximum value the criterion can reach given the relevance.
-   */
-  def bound: Float
+  var redundance: Float = 0.0f
+
+  override def score = relevance - redundance * beta
+  
+  override def init(relevance: Float): InfoThCriterion = {
+    this.setRelevance(relevance)
+  }
+  
+  override def update(mi: Float, cmi: Float = 0.0f): InfoThCriterion = {
+    redundance += mi
+    this
+  }
+  
+  override def toString: String = "MIFS"
 }
+
 
 /**
  * Joint Mutual Information criterion (JMI)
  */
-class Jmi extends InfoThCriterion with Bound {
+class Jmi extends InfoThCriterion {
 
   var redundance: Float = 0.0f
   var conditionalRedundance: Float = 0.0f
   var selectedSize: Int = 0
-
-  override def bound = 2 * relevance
 
   override def score = {
     if (selectedSize != 0) {
@@ -114,15 +136,15 @@ class Jmi extends InfoThCriterion with Bound {
   override def toString: String = "JMI"
 }
 
+
 /**
  * Minimum-Redundancy Maximum-Relevance criterion (mRMR)
  */
-class Mrmr extends InfoThCriterion with Bound {
+class Mrmr extends InfoThCriterion {
 
   var redundance: Float = 0.0f
   var selectedSize: Int = 0
 
-  override def bound = relevance
   override def score = {
     if (selectedSize != 0) {
       relevance - redundance / selectedSize
@@ -133,7 +155,7 @@ class Mrmr extends InfoThCriterion with Bound {
   override def init(relevance: Float): InfoThCriterion = {
     this.setRelevance(relevance)
   }
-  override def update(mi: Float, cmi: Float): InfoThCriterion = {
+  override def update(mi: Float, cmi: Float = 0.0f): InfoThCriterion = {
     redundance += mi
     selectedSize += 1
     this
