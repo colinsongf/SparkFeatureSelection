@@ -42,7 +42,7 @@ class MDLPDiscretizer private (val data: RDD[LabeledPoint]) extends Serializable
 
   private val log2 = { x: Double => math.log(x) / math.log(2) }  
   private def entropy(freqs: Seq[Long], n: Long) = {
-    val n = freqs.reduce(_ + _)
+    //val n = freqs.reduce(_ + _)
     freqs.aggregate(0.0)({ case (h, q) =>
       h + (if (q == 0) 0  else (q.toDouble / n) * (math.log(q.toDouble / n) / math.log(2)))
     }, { case (h1, h2) => h1 + h2 }) * -1
