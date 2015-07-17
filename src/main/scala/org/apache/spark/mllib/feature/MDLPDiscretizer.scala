@@ -41,6 +41,13 @@ import org.apache.spark.mllib.linalg._
 class MDLPDiscretizer private (val data: RDD[LabeledPoint]) extends Serializable with Logging {
 
   private val log2 = { x: Double => math.log(x) / math.log(2) }  
+  private def entropy(freqs: Seq[Long], n: Long) = {
+    val n = freqs.reduce(_ + _)
+    freqs.aggregate(0.0)({ case (h, q) =>
+      h + (if (q == 0) 0  else (q.toDouble / n) * (math.log(q.toDouble / n) / math.log(2)))
+    }, { case (h1, h2) => h1 + h2 }) * -1
+  }
+  
   private val isBoundary = (f1: Array[Long], f2: Array[Long]) => {
     (f1, f2).zipped.map(_ + _).filter(_ != 0).size > 1
   }
@@ -250,16 +257,16 @@ class MDLPDiscretizer private (val data: RDD[LabeledPoint]) extends Serializable
     // k: number of distinct classes
     // hs: entropy        
     val s  = totals.sum
-    val hs = InfoTheory.entropy(totals.toSeq, s)
+    val hs = entropy(totals.toSeq, s)
     val k  = totals.filter(_ != 0).size
 
     // select the best threshold according to MDLP
     val finalCandidates = result.flatMap({
       case (cand, _, leftFreqs, rightFreqs) =>
         val k1 = leftFreqs.filter(_ != 0).size; val s1 = leftFreqs.sum
-        val hs1 = InfoTheory.entropy(leftFreqs, s1)
+        val hs1 = entropy(leftFreqs, s1)
         val k2 = rightFreqs.filter(_ != 0).size; val s2 = rightFreqs.sum
-        val hs2 = InfoTheory.entropy(rightFreqs, s2)
+        val hs2 = entropy(rightFreqs, s2)
         val weightedHs = (s1 * hs1 + s2 * hs2) / s
         val gain = hs - weightedHs
         val delta = log2(math.pow(3, k) - 2) - (k * hs - k1 * hs1 - k2 * hs2)
@@ -307,7 +314,7 @@ class MDLPDiscretizer private (val data: RDD[LabeledPoint]) extends Serializable
     // k: number of distinct classes
     // hs: entropy
     val s = totals.sum
-    val hs = InfoTheory.entropy(totals.toSeq, s)
+    val hs = entropy(totals.toSeq, s)
     val k = totals.filter(_ != 0).size
 
     // select best threshold according to the criteria
@@ -315,10 +322,10 @@ class MDLPDiscretizer private (val data: RDD[LabeledPoint]) extends Serializable
       case (cand, _, leftFreqs, rightFreqs) =>
         val k1 = leftFreqs.filter(_ != 0).size
         val s1 = if (k1 > 0) leftFreqs.sum else 0
-        val hs1 = InfoTheory.entropy(leftFreqs, s1)
+        val hs1 = entropy(leftFreqs, s1)
         val k2 = rightFreqs.filter(_ != 0).size
         val s2 = if (k2 > 0) rightFreqs.sum else 0
-        val hs2 = InfoTheory.entropy(rightFreqs, s2)
+        val hs2 = entropy(rightFreqs, s2)
         val weightedHs = (s1 * hs1 + s2 * hs2) / s
         val gain = hs - weightedHs
         val delta = log2(math.pow(3, k) - 2) - (k * hs - k1 * hs1 - k2 * hs2)
