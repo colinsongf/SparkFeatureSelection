@@ -20,19 +20,23 @@ package org.apache.spark.mllib.feature
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.rdd.RDD
 import org.apache.spark.mllib.linalg._
-import org.apache.spark.annotation.Experimental
 
 /**
- * Generic discretizer model that transform data given a list of thresholds by feature.
- * @param thresholds Thresholds defined by feature (both must be sorted)
+ * Generic a discretizer model that transform data given a list of thresholds by feature.
+ * 
+ * @param thresholds Thresholds defined for each feature (must be sorted).
  *  
  * Note: checking the second sorting condition can be much more time-consuming. 
  * We omit this condition.
  */
-
-@Experimental
 class DiscretizerModel (val thresholds: Array[Array[Float]]) extends VectorTransformer {
   
+  /**
+   * Discretizes values in a given dataset using thresholds.
+   *
+   * @param data A single continuous-valued vector.
+   * @return A resulting vector with its values discretized (from 1 to n).
+   */
   override def transform(data: Vector) = {
     data match {
       case v: SparseVector =>
@@ -54,7 +58,7 @@ class DiscretizerModel (val thresholds: Array[Array[Float]]) extends VectorTrans
    * Discretizes values in a given dataset using thresholds.
    *
    * @param data RDD with continuous-valued vectors.
-   * @return RDD with discretized data (bins from 1 to n).
+   * @return RDD with discretized data (from 1 to n).
    */
   override def transform(data: RDD[Vector]) = {
     val bc_thresholds = data.context.broadcast(thresholds)    
@@ -79,7 +83,7 @@ class DiscretizerModel (val thresholds: Array[Array[Float]]) extends VectorTrans
   /**
    * Discretizes a value with a set of intervals.
    *
-   * @param value Value to be discretized
+   * @param value Value to be discretized.
    * @param thresholds Thresholds used to assign a discrete value
    * 
    * Note: The last threshold must be always Positive Infinity
