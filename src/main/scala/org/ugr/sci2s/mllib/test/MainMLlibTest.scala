@@ -35,7 +35,7 @@ object MainMLlibTest {
 
 		println("Usage: MLlibTest --header-file=\"hdfs://\" (--train-file=\"hdfs://\" --test-file=\"hdfs://\" " 
 		    + "| --data-dir=\"hdfs://\") --output-dir=\"hdfs:\\ --disc=yes [ --disc-nbins=10 --save-disc=yes ] --fs=yes [ --fs-criterion=mrmr "
-		    + "--fs-nfeat=100 --fs-npart=800 --save-fs=yes ] --file-format=LibSVM|KEEL --data-format=sparse|dense "
+		    + "--fs-nfeat=100 --fs-npart=864 --save-fs=yes ] --file-format=LibSVM|KEEL --data-format=sparse|dense "
         + "--classifier=no|SVM|NB|LR|DT [ --cls-lambda=1.0 --cls-numIter=1 --cls-stepSize = 1.0"
 		    + "--cls-regParam=1.0 --cls-miniBatchFraction=1.0 ]")
         
@@ -88,7 +88,7 @@ object MainMLlibTest {
 		val fs = (data: RDD[LabeledPoint]) => {
 			val criterion = new InfoThCriterionFactory(params.getOrElse("fs-criterion", "mrmr"))
 			val nToSelect = MLEU.toInt(params.getOrElse("fs-nfeat", "100"), 100)
-			val npart = MLEU.toInt(params.getOrElse("fs-npart", "750"), 750) // 0 -> w/o pool
+			val npart = MLEU.toInt(params.getOrElse("fs-npart", "864"), 864) // 0 -> w/o pool
 
 			println("*** FS criterion: " + criterion.getCriterion.toString)
 			println("*** Number of features to select: " + nToSelect)
