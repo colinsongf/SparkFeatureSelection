@@ -4,8 +4,6 @@ import scala.util.Random
 import org.apache.spark.mllib.classification.ClassificationModel
 import org.apache.spark.rdd.RDD
 import org.apache.spark.SparkContext._
-import org.apache.spark.mllib.regression.LabeledPoint
-import org.apache.spark.mllib.util.ConfusionMatrix
 import org.apache.spark.annotation.Experimental
 import org.apache.spark.SparkContext
 import scala.collection.immutable.List
@@ -15,6 +13,8 @@ import org.apache.hadoop.mapreduce.lib.input.InvalidInputException
 import org.apache.spark.mllib.regression.LabeledPoint
 import org.apache.spark.storage.StorageLevel
 import org.apache.spark.mllib.util.MLUtils
+import org.apache.spark.mllib.evaluation.MulticlassMetrics
+import org.apache.spark.mllib.linalg.SparseVector
 
 object MLExperimentUtils {
   
@@ -59,6 +59,10 @@ object MLExperimentUtils {
 
  		  def computePredictions (model: ClassificationModelAdapter, data: RDD[LabeledPoint]) =
 			  data.map(point => (point.label, model.predict(point.features)))
+        
+      def computePredictions2 (model: ClassificationModelAdapter, data: RDD[LabeledPoint]) = {
+        model.predict(data.map(_.features)).zip(data.map(_.label)).map(_.swap)
+      }    
 		
 		  def computeAccuracy (valuesAndPreds: RDD[(Double, Double)]) = 
 		    valuesAndPreds.filter(r => r._1 == r._2).count.toDouble / valuesAndPreds.count
@@ -112,8 +116,10 @@ object MLExperimentUtils {
         
         // Save discretized data 
         if(save) {
-         discData.saveAsTextFile(outputDir + "/disc_train_" + iteration + ".csv")
-         discTestData.saveAsTextFile(outputDir + "/disc_test_" + iteration + ".csv")       
+          MLUtils.saveAsLibSVMFile(discData, outputDir + "/disc_train_" + iteration + ".csv")
+          MLUtils.saveAsLibSVMFile(discTestData, outputDir + "/disc_test_" + iteration + ".csv")
+          //discData.saveAsTextFile(outputDir + "/disc_train_" + iteration + ".csv")
+          //discTestData.saveAsTextFile(outputDir + "/disc_test_" + iteration + ".csv")       
         }
         
         println("Discretized all data")
@@ -143,8 +149,10 @@ object MLExperimentUtils {
           
           // Save discretized data 
           if(save) {
-             discData.saveAsTextFile(outputDir + "/disc_train_" + iteration + ".csv")
-             discTestData.saveAsTextFile(outputDir + "/disc_test_" + iteration + ".csv")       
+            MLUtils.saveAsLibSVMFile(discData, outputDir + "/disc_train_" + iteration + ".csv")
+            MLUtils.saveAsLibSVMFile(discTestData, outputDir + "/disc_test_" + iteration + ".csv")
+          //discData.saveAsTextFile(outputDir + "/disc_train_" + iteration + ".csv")
+          //discTestData.saveAsTextFile(outputDir + "/disc_test_" + iteration + ".csv")             
           } 
           
 					val strTime = sc.parallelize(Array(discTime.toString), 1)
@@ -169,7 +177,7 @@ object MLExperimentUtils {
 			try {
 				val selectedAtts = sc.textFile(outputDir + "/fs_scheme_" + iteration).filter(!_.isEmpty())
 										.map(parseSelectedAtts).collect				
-				val featureSelector = new SelectorModel(selectedAtts.sorted)
+				val featureSelector = new SelectorModel(selectedAtts.map(_ - 1).sorted) // Must be transformed to indices (-1)
 				
 				val FSTime = sc.textFile(outputDir + "/fs_time_" + iteration)
 						.filter(!_.isEmpty())
@@ -189,7 +197,7 @@ object MLExperimentUtils {
 			} catch {
 				case iie: org.apache.hadoop.mapred.InvalidInputException =>
 					val initStartTime = System.nanoTime()
-          val fstrain = train.repartition(750).persist(StorageLevel.MEMORY_ONLY_SER)
+          val fstrain = train.repartition(864).persist(StorageLevel.MEMORY_ONLY_SER)
           val c = fstrain.count()
           
 					val featureSelector = fs(fstrain)
@@ -248,27 +256,26 @@ object MLExperimentUtils {
 				(traValuesAndPreds, tstValuesAndPreds, classifficationTime)
 			} catch {
 				case iie: org.apache.hadoop.mapred.InvalidInputException => 
-          val ctrain = train.persist(StorageLevel.MEMORY_ONLY_SER)
-          val nInstances = ctrain.count() // to persist train and not to affect time measurements
+          val ctrain = train.repartition(864).persist(StorageLevel.MEMORY_ONLY)
+          //val nInstances = ctrain.count() // to persist train and not to affect time measurements
 					val initStartTime = System.nanoTime()	
 					val classificationModel = classify(ctrain)
 					val classificationTime = (System.nanoTime() - initStartTime) / 1e9
 					
-					val traValuesAndPreds = computePredictions(classificationModel, ctrain)
-					val tstValuesAndPreds = computePredictions(classificationModel, test)
+					val traValuesAndPreds = computePredictions2(classificationModel, ctrain).cache()
+					val tstValuesAndPreds = computePredictions2(classificationModel, test).cache()
 					
-					// Print training fold results
-					//val reverseConv = typeConv.last.map(_.swap) // for last class
-					val outputTrain = traValuesAndPreds.map(t => t._1.toInt + "\t" + t._2.toInt)   
+          val c = tstValuesAndPreds.count()
+					// Save prediction results
+					/*val outputTrain = traValuesAndPreds.map(t => t._1.toInt + "\t" + t._2.toInt)   
 					outputTrain.saveAsTextFile(outputDir + "/result_" + iteration + ".tra")
 					val outputTest = tstValuesAndPreds.map(t => t._1.toInt + "\t" + t._2.toInt)  
-          //val outputTest = tstValuesAndPreds.map(t => reverseConv.getOrElse(t._1, "") + "\t" +
-					//	    reverseConv.getOrElse(t._2, ""))    
-					outputTest.saveAsTextFile(outputDir + "/result_" + iteration + ".tst")		
-					val strTime = sc.parallelize(Array(classificationTime.toString), 1)
+          outputTest.saveAsTextFile(outputDir + "/result_" + iteration + ".tst")*/
+					
+          val strTime = sc.parallelize(Array(classificationTime.toString), 1)
 					strTime.saveAsTextFile(outputDir + "/classification_time_" + iteration)
           
-          ctrain.unpersist()
+          //ctrain.unpersist()
 					
 					(traValuesAndPreds, tstValuesAndPreds, classificationTime)
 			}
@@ -316,10 +323,16 @@ object MLExperimentUtils {
                   svmData.unpersist()
 		              val data = if(samplingRate < 1.0) svmData.sample(false, samplingRate) else svmData
 		              if(dense) {
-		                data.map{case LabeledPoint(label, features) => 
-		                  new LabeledPoint(label, Vectors.dense(features.toArray))}
+		                data.map{ case LabeledPoint(label, features) =>  
+                      val flabel = if(label == -1.0) 0.0 else label
+		                  new LabeledPoint(flabel, Vectors.dense(features.toArray))
+                    }
 		              } else {
-		                data
+                    data.map{ case LabeledPoint(label, features) =>       
+                      val flabel = if(label == -1.0) 0.0 else label
+                      new LabeledPoint(flabel, features)
+                    }
+                    // data
 		              }
 		            }
 		          case _ => 
@@ -376,8 +389,8 @@ object MLExperimentUtils {
 				times("FSTime") = times("FSTime") :+ taskTime
 				
 				//Classification
-        val nFeatures = trData.first().features.size
-        println("Number of features: " + nFeatures)
+        //val nFeatures = trData.first().features.size
+        //println("Number of features: " + nFeatures)
         
 				classify match { 
 				  case Some(cls) => 
@@ -435,19 +448,25 @@ object MLExperimentUtils {
 	      			val (aggAvgAccTr, aggStdAccTr) = calcAggStatistics(traFoldAcc)
 	      			val (aggAvgAccTst, aggStdAccTst) = calcAggStatistics(tstFoldAcc)
 	      			output += s"Avg Acc:\t$aggAvgAccTr\t$aggAvgAccTst\n"
-	      			output += s"Svd acc:\t$aggStdAccTr\t$aggStdAccTst\n"
+	      			output += s"Svd acc:\t$aggStdAccTr\t$aggStdAccTst\n\n\n"
 	      					
 	      			// Confusion Matrix
-	      			val aggTstConfMatrix = ConfusionMatrix.apply(predictions.map(_._2).reduceLeft(_ ++ _))			    
-	    		    output += "Test Confusion Matrix\n" + aggTstConfMatrix.toString
-	    		    output += aggTstConfMatrix.fValue.foldLeft("\t")((str, t) => str + "\t" + t._1) + "\n"
+              // ConfusionMatrix.apply(predictions.map(_._2).reduceLeft(_ ++ _))
+	      			val tsstat = new MulticlassMetrics(predictions.map(_._2).reduceLeft(_ ++ _))			    
+	    		    output += "Test Confusion Matrix\n" + tsstat.confusionMatrix.toString + "\n"
+	    		    //output += aggTstConfMatrix.fValue.foldLeft("\t")((str, t) => str + "\t" + t._1) + "\n"              
+	    		    //output += aggTstConfMatrix.fMeasure.foldLeft("F-Measure:")((str, t) => str + "\t" + t._2) + "\n"
+	    		    //output += aggTstConfMatrix.precision.foldLeft("Precision:")((str, t) => str + "\t" + t._2) + "\n"
+	    		    //output += aggTstConfMatrix.recall.foldLeft("Recall:")((str, t) => str + "\t" + t._2) + "\n"
+              output += "F-Measure:" + tsstat.fMeasure + "\n"
+              output += "Precision:" + tsstat.precision + "\n"
+              output += "Recall:" + tsstat.recall + "\n"
+              val auc = (1 + tsstat.truePositiveRate(1.0) - tsstat.falsePositiveRate(1.0)) / 2
+              output += "AUC (label: 1.0): " + auc + "\n"
 	    		    
-	    		    output += aggTstConfMatrix.fValue.foldLeft("F-Measure:")((str, t) => str + "\t" + t._2) + "\n"
-	    		    output += aggTstConfMatrix.precision.foldLeft("Precision:")((str, t) => str + "\t" + t._2) + "\n"
-	    		    output += aggTstConfMatrix.recall.foldLeft("Recall:")((str, t) => str + "\t" + t._2) + "\n"
-	    		    
-	    		    val aggTraConfMatrix = ConfusionMatrix.apply(predictions.map(_._1).reduceLeft(_ ++ _))
-	    		    output += "Train Confusion Matrix\n" + aggTraConfMatrix.toString
+	    		    //val aggTraConfMatrix = ConfusionMatrix.apply(predictions.map(_._1).reduceLeft(_ ++ _))
+              val trstat = new MulticlassMetrics(predictions.map(_._1).reduceLeft(_ ++ _))    
+	    		    output += "Train Confusion Matrix\n" + trstat.confusionMatrix.toString
 	        }
 			println(output)
 			
